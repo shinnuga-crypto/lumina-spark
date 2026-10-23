@@ -1,0 +1,5 @@
+.godot/
+runtime/
+*.exe
+*.zip
+test-output/
