@@ -18,11 +18,14 @@ func press(code:int, down:bool):
 	Input.parse_input_event(e)
 	Input.flush_buffered_events()
 func step(target:float, jump:bool):
-	press(KEY_RIGHT,game.player.x<target-25 or (absf(game.player.x-target)<=25 and game.facing!=aim_dir and aim_dir>0))
-	press(KEY_LEFT,game.player.x>target+25 or (absf(game.player.x-target)<=25 and game.facing!=aim_dir and aim_dir<0))
+	var error=target-game.player.x
+	if game.field_area()==5 and not game.grounded: error-=game.velocity.x*absf(game.velocity.x)/(2*650.0)
+	press(KEY_RIGHT,error>25 or (absf(error)<=25 and game.facing!=aim_dir and aim_dir>0))
+	press(KEY_LEFT,error< -25 or (absf(error)<=25 and game.facing!=aim_dir and aim_dir<0))
 	press(KEY_X,ticks%8<4 and not charging) # tap fire; holding now charges
 	press(KEY_V,charging)
-	press(KEY_DOWN,dropping)
+	var fastfall=game.field_area()==5 and not game.grounded and not jump and game.velocity.y>=0 and absf(target-game.player.x)<90 and game.on_ground(game.player.x,610)
+	press(KEY_DOWN,dropping or fastfall)
 	press(KEY_SPACE,jump or (dropping and ticks%2==0))
 	game.invincible=999 # isolate route/combat reachability from damage balancing
 	game.update_game(1.0/60)
@@ -34,6 +37,8 @@ func run():
 	game.set_process(false)
 	game.set_physics_process(false)
 	game.fixed_seed=true
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--seed="): game.run_seed=arg.trim_prefix("--seed=").to_int()
 	game.start_game()
 	var failures=[]
 	for room in range(24):
@@ -52,6 +57,11 @@ func run():
 			if enemy!=null:
 				target=enemy.p.x-150
 				aim_dir=1
+				if not game.on_ground(target-35,610) or not game.on_ground(target+35,610):
+					var alternate=enemy.p.x+150
+					if game.on_ground(alternate-35,610) and game.on_ground(alternate+35,610):
+						target=alternate
+						aim_dir=-1
 				jump=enemy.p.y<game.player.y-65
 				dropping=enemy.p.y>game.player.y+65 and game.grounded
 				charging=enemy.get("shield",false) and t%75<58
@@ -143,7 +153,13 @@ func run():
 		if game.state!="clear": failures.append("boss not cleared")
 		for door in game.gates:
 			if not door.passed or door.open: failures.append("door %d was not sealed after crossing"%door.room)
+		var minibosses=0
+		for enemy in game.enemies:
+			if enemy.kind==6:
+				minibosses+=1
+				if enemy.hp>0: failures.append("miniboss alive after clear")
+		if minibosses!=1: failures.append("expected one mandatory miniboss")
 	for code in held.keys(): press(code,false)
-	print("ROUTE TEST: ","PASS" if failures.is_empty() else "FAIL"," ",failures," ticks=",ticks," seconds=",ticks/60," kills=",game.kills," cores=",game.core_count)
+	print("ROUTE TEST: ","PASS" if failures.is_empty() else "FAIL"," ",failures," seed=",game.run_seed," ticks=",ticks," seconds=",ticks/60," kills=",game.kills," cores=",game.core_count," score=",game.score," max_combo=",game.max_combo)
 	await process_frame
 	quit(0 if failures.is_empty() else 1)

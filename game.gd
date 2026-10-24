@@ -13,6 +13,19 @@ const ARM_OVERLAP = 22.0
 var layout: Array = []
 var moving: Array[Dictionary] = []
 var art: Dictionary = {}
+var environment_art: Dictionary = {}
+var score = 0
+var combo = 0
+var max_combo = 0
+var combo_timer = 0.0
+var damage_taken = 0
+var area_damage = 0
+var just_reflections = 0
+var just_dodges = 0
+var clear_rewarded = false
+var best_score = 0
+var record_path = "user://records.cfg"
+var parry_marks: Array[Dictionary] = []
 var fx: Array[Dictionary] = []
 var hitstop = 0.0
 var drop_timer = 0.0
@@ -106,8 +119,12 @@ const DOOR_HALF_WIDTH = 24.0
 const PLAYER_HALF_WIDTH = 20.0
 const DOOR_PLAYER_HEIGHT = 100.0
 var fixed_seed = false
+var run_seed = 7234
 var alert_cool = 0.0
 var music: AudioStreamPlayer
+var bgm: Dictionary = {}
+var music_track = ""
+var music_fade: Tween
 var sfx: Dictionary = {}
 var rng = RandomNumberGenerator.new()
 var sector_names = ["01  星明かりの外壁", "02  配電回廊", "03  空中搬送路", "04  冷却プラント", "05  防衛区画", "06  コアへの道", "07  星炉の守護者"]
@@ -135,10 +152,12 @@ func _ready():
 			sfx[name] = load("res://assets/" + name + ".wav")
 	music = AudioStreamPlayer.new()
 	add_child(music)
-	if ResourceLoader.exists("res://assets/music.wav"):
-		music.stream = load("res://assets/music.wav")
-		music.volume_db = -17
-		music.finished.connect(func(): music.play())
+	for entry in [["stage","heroic-quest.mp3"],["boss","untitled.mp3"]]:
+		var stream=load("res://assets/audio/"+entry[1])
+		stream.loop=true
+		bgm[entry[0]]=stream
+	music.stream=bgm.stage
+	music.volume_db=-18
 	for entry in [["poses",4],["enemies",4],["explosion",6],["charge",6],["muzzle",6],["tiles",3],["core",1]]:
 		var path = "res://assets/"+entry[0]+("-v2" if entry[0] in ["poses","enemies"] else "")+".png"
 		if ResourceLoader.exists(path):
@@ -171,6 +190,14 @@ func _ready():
 		motions[name] = frames
 	for name in motion_meta.rig:
 		rig_textures[name] = load("res://assets/motion/"+motion_meta.rig[name].file)
+	if FileAccess.file_exists("res://assets/improvements/regions.json"):
+		var additions = JSON.parse_string(FileAccess.get_file_as_string("res://assets/improvements/regions.json"))
+		for name in additions:
+			var rects: Array[Rect2] = []
+			for r in additions[name].regions: rects.append(Rect2(r[0],r[1],r[2],r[3]))
+			environment_art[name]={"texture":load("res://assets/improvements/"+name+".png"),"regions":rects,"anchors":additions[name].get("anchors",[]),"scale":additions[name].get("scale",1.0)}
+	var records = ConfigFile.new()
+	if records.load(record_path)==OK: best_score=int(records.get_value("records","score",0))
 	build_level()
 	fixed_seed = OS.get_cmdline_user_args().size()>0
 	if "--self-test" in OS.get_cmdline_user_args():
@@ -255,11 +282,16 @@ func place_enemy(pos: Vector2, kind: int, room: int):
 	spawn_enemy(pos,kind,room)
 
 func spawn_enemy(pos: Vector2, kind: int, room: int):
-	enemies.append({"p":pos,"origin":pos,"kind":kind,"room":room,"hp":[8,6,12,10,8,10][kind],"shield":kind==2,"t":rng.randf_range(0,5),"shot":rng.randf_range(0.6,2),"flash":0.0})
+	enemies.append({"p":pos,"origin":pos,"kind":kind,"room":room,"hp":[8,6,12,10,8,10,112][kind],"shield":kind==2,"t":rng.randf_range(0,5),"shot":rng.randf_range(0.6,2),"flash":0.0})
+	if kind==6:
+		enemies[-1].mode="intro"
+		enemies[-1].mt=1.2
+		enemies[-1].cycle=0
+		enemies[-1].dir=-1.0
 
 func start_game():
 	# Tests replay the same run; normal play gets a fresh enemy arrangement every time.
-	if fixed_seed: rng.seed = 7234
+	if fixed_seed: rng.seed = run_seed
 	else: rng.randomize()
 	hp = 20 if easy else 12
 	max_hp = hp
@@ -282,6 +314,16 @@ func start_game():
 	camera_x = 0
 	elapsed = 0
 	kills = 0
+	score=0
+	combo=0
+	max_combo=0
+	combo_timer=0
+	damage_taken=0
+	area_damage=0
+	just_reflections=0
+	just_dodges=0
+	clear_rewarded=false
+	parry_marks.clear()
 	deaths = 0
 	falls = 0
 	safe_pos = Vector2(130, 610)
@@ -313,7 +355,7 @@ func start_game():
 	state = "play"
 	banner = "ルミナ、発進！ 星炉の暴走を止めよう。"
 	banner_time = 4
-	if not muted: music.play()
+	set_bgm("stage",true)
 
 func key(code: int) -> bool:
 	return Input.is_physical_key_pressed(code)
@@ -379,6 +421,7 @@ func update_game(dt: float):
 			fx.append({"p":boss_pos+Vector2(rng.randf_range(-85,85),rng.randf_range(-150,0)),"age":0.0,"size":140.0})
 		if ending_time >= 2.6:
 			state = "clear"
+			reward_clear()
 			sound("win")
 		return
 	if state != "play": return
@@ -391,6 +434,8 @@ func update_game(dt: float):
 		if held_fire and not prev_fire: fire_buffer = 0.12+maxf(0,hitstop)
 		prev_jump = held_jump
 		return
+	combo_timer=maxf(0,combo_timer-dt)
+	if combo_timer<=0: combo=0
 	saber_time = maxf(0,saber_time-dt)
 	aim_time = maxf(0,aim_time-dt)
 	saber_cooldown = maxf(0,saber_cooldown-dt)
@@ -483,9 +528,13 @@ func update_game(dt: float):
 	else:
 		var on_ice = int(player.x/ROOM)<24 and layout[int(player.x/ROOM)].ice and grounded
 		# Ice barely grips and lets Lumina slide faster than she can run.
-		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * (340.0 if on_ice else 285.0) * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), (150 if on_ice else 2300)*dt)
+		var move_accel = 150.0 if on_ice else (650.0 if field_area()==5 and not grounded else 2300.0)
+		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * (340.0 if on_ice else 285.0) * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), move_accel*dt)
 		var low_gravity = field_area()==5
+		var low_gravity_air = low_gravity and not grounded
 		velocity.y = minf(560.0 if low_gravity else 900.0, velocity.y + (900.0 if low_gravity else 1600.0) * dt)
+		if low_gravity_air and (key(KEY_DOWN) or key(KEY_S) or joy(JOY_BUTTON_DPAD_DOWN)):
+			velocity.y=move_toward(velocity.y,800.0,2100.0*dt)
 	var old_y = player.y
 	var old_x = player.x
 	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, backtrack_limit(), END_X - 30)
@@ -528,6 +577,7 @@ func update_game(dt: float):
 
 		if not core.got and (player-Vector2(0,30)).distance_to(core.p)<45:
 			core.got = true
+			score += 500
 			core_count += 1
 			hp = mini(max_hp,hp+3)
 			burst(core.p,Color("ffd27f"),24)
@@ -545,10 +595,8 @@ func update_game(dt: float):
 				"kill":
 					core.sync = 0
 					var base = core.room*ROOM
-					place_enemy(Vector2(base+300,600),0,core.room)
-					place_enemy(Vector2(base+560,380),1,core.room)
-					place_enemy(Vector2(base+900,390),5,core.room)
-					banner = "スターコア回収  %d / 6  —  待ち伏せだ！ 全滅させて扉を開けよう"%core_count
+					spawn_enemy(Vector2(base+820,600),6,core.room)
+					banner = "搬送路の番人、起動！ 予告を見て射撃・突進・衝撃波を避けよう"
 	for laser in lasers:
 		if fmod(elapsed+laser.phase,3.6)>2.2 and absf(player.x-laser.x)<55 and player.y>574:
 			hurt(1 if easy else 2)
@@ -585,6 +633,7 @@ func update_game(dt: float):
 		p.life -= dt
 		if p.life <= 0: particles.remove_at(i)
 	camera_x = clampf(lerpf(camera_x,player.x-390,1-exp(-dt*8)),0,END_X-W)
+	update_music_state()
 
 func shoot(big: bool, full = false):
 	if saber_time>0 or hurt_pose>0: return
@@ -651,6 +700,18 @@ func update_field(dt: float):
 					sound("hit")
 					for e in enemies:
 						if e.hp>0 and e.room==room: e.shot = minf(e.shot,rng.randf_range(0.05,0.35))
+		5:
+			if player.y<244:
+				player.y=244
+				velocity.y=maxf(0,velocity.y)
+				if ceiling_phase()=="on":
+					hurt(1 if easy else 2)
+					velocity.y=260
+					jump_buffer=0
+
+func ceiling_phase() -> String:
+	var cycle=fmod(elapsed,6.0)
+	return "on" if cycle>=4.0 else ("warn" if cycle>=3.1 else "off")
 
 func gate_of(room: int) -> Dictionary:
 	for gate in gates:
@@ -663,7 +724,7 @@ func door_ready(gate: Dictionary) -> bool:
 		if core.room==gate.room and (not core.got or core.sync>0): return false
 	if gate.kind in ["sync","kill"]:
 		for e in enemies:
-			if e.room==gate.room and e.hp>0: return false
+			if e.room==gate.room and e.hp>0 and (gate.kind=="sync" or e.kind==6): return false
 	if gate.kind=="break" and gate.hp>0: return false
 	for s in gate.switches:
 		if not s.on: return false
@@ -710,6 +771,10 @@ func update_doors(dt: float, previous: Vector2):
 			gate.open=false
 			# A fall immediately after crossing must recover on the destination side.
 			safe_pos=Vector2(maxf(player.x,gate.x+90),DOOR_FLOOR)
+			if area_damage==0:
+				score+=300
+				popup(player-Vector2(0,110),"ノーダメージ区間 +300",Color("ffe28a"))
+			area_damage=0
 			sound("dash")
 			burst(Vector2(gate.x,525),PINK,10)
 			if absf(player.x-gate.x)<500:
@@ -769,6 +834,9 @@ func update_enemies(dt: float):
 		e.t += dt
 		e.flash -= dt
 		e.shot -= dt
+		if e.kind==6:
+			update_miniboss(e,dt)
+			continue
 		var on_screen = e.p.x>camera_x+20 and e.p.x<camera_x+W-20 and not door_between(e.p.x,player.x)
 		var speed = 190.0 if easy else 250.0
 		var aim = (player+Vector2(0,-40)-e.p).normalized()
@@ -944,10 +1012,14 @@ func update_bullets(dt: float):
 					b.enemy = false
 					b.v = Vector2(saber_facing*900,0)
 					b.damage = 4
+					b.reflected=true
 					b.life = 1.4
 					b.hits = []
 					b.erase("home")
 					energy = minf(ENERGY_MAX,energy+8)
+					score+=100
+					just_reflections+=1
+					parry_marks.append({"p":b.p,"age":0.0})
 					burst(b.p,Color("ffe28a"),12)
 					popup(b.p,"JUST!",Color("ffe28a"))
 					hitstop = maxf(hitstop,0.03)
@@ -962,6 +1034,8 @@ func update_bullets(dt: float):
 					if not b.get("grazed",false):
 						b.grazed = true
 						energy = minf(ENERGY_MAX,energy+6)
+						score+=60
+						just_dodges+=1
 						popup(player-Vector2(0,95),"JUST DODGE  +6",CYAN)
 					continue
 				hurt(b.damage)
@@ -977,25 +1051,19 @@ func update_bullets(dt: float):
 						remove = true
 						break
 					e.shield = false
-					e.hp -= b.damage
+					var damage = b.damage*(2 if e.kind==6 and b.get("reflected",false) else 1)
+					e.hp -= damage
+					if e.kind==6 and b.get("reflected",false): reflection_reward(b.p)
 					e.flash = 0.12
 					burst(b.p,PINK,4)
 					if pierce: b.hits.append(ei)
 					else: remove = true
 					if e.hp <= 0:
-						kills += 1
-						hitstop = 0.045
-						fx.append({"p":e.p-Vector2(0,20),"age":0.0,"size":100.0})
-						burst(e.p,Color("ffc578"),18)
-						if kills%4 == 0:
-							var drop = e.p-Vector2(0,25)
-							var floor_y = 610.0
-							for platform in platforms:
-								if drop.x>=platform.position.x and drop.x<=platform.end.x and platform.position.y>=drop.y: floor_y = minf(floor_y,platform.position.y)
-							pickups.append(Vector2(drop.x,floor_y-30))
+						register_enemy_defeat(e)
 					break
 			if not remove and boss_active and boss_intro<=0 and boss_hp > 0 and Rect2(boss_pos-Vector2(70,160),Vector2(140,180)).grow(b.r).has_point(b.p):
-				boss_hp -= b.damage
+				boss_hp -= b.damage*(2 if b.get("reflected",false) else 1)
+				if b.get("reflected",false): reflection_reward(b.p)
 				boss_flash = 0.1
 				remove = true
 				burst(b.p,PINK,6)
@@ -1010,6 +1078,10 @@ func update_bullets(dt: float):
 
 func hurt(amount: int):
 	if (invincible > 0 and amount < 99) or state != "play": return
+	damage_taken+=mini(hp,amount)
+	area_damage+=mini(hp,amount)
+	combo=0
+	combo_timer=0
 	hp = maxi(0,hp-amount)
 	invincible = 1.3
 	shake = 8
@@ -1108,7 +1180,7 @@ func _draw():
 			txt(Vector2(x+100,265),tips[room],22,CYAN)
 			if room==3: txt(Vector2(x+100,235),"オレンジのトゲ弾はセーバーで消せない — 跳ぶかダッシュで避けよう",18,Color("ff9a3c"))
 		if room in [4,8,12,16,20]:
-			var tips = {4:"配電回廊：ときどき床に電流が走る！ 予告が出たら足場へ",8:"空中搬送路：突風が吹く — 風下の穴に注意",12:"冷却プラント：氷の床はほとんど止まれない！",16:"防衛区画：サーチライトに見つかると一斉射撃",20:"コアへの道：低重力 — 高く跳べるが落ちるのもゆっくり"}
+			var tips = {4:"配電回廊：ときどき床に電流が走る！ 予告が出たら足場へ",8:"空中搬送路：突風が吹く — 風下の穴に注意",12:"冷却プラント：氷の床はほとんど止まれない！",16:"防衛区画：サーチライトに見つかると一斉射撃",20:"低重力：天井の電流と空中の慣性に注意 — ↓ / Sで急降下"}
 			txt(Vector2(x+100,235),tips[room],20,CYAN)
 
 	for core in cores:
@@ -1136,7 +1208,8 @@ func _draw():
 		if absf(p.x-player.x)<1300: sprite(6,p+offset+Vector2(0,sin(clock*3+p.x)*5),32,false,Color(0.5,0.6,0.6,0.55) if hp==max_hp else Color.WHITE)
 	for e in enemies:
 		if e.hp > 0 and absf(e.p.x-player.x)<1300:
-			if e.kind<2: sprite(4+e.kind,e.p+offset+Vector2(0,10),76,e.p.x<player.x,Color(2,2,2) if e.flash>0 else Color.WHITE)
+			if e.kind==6: draw_miniboss(e,offset)
+			elif e.kind<2: sprite(4+e.kind,e.p+offset+Vector2(0,10),76,e.p.x<player.x,Color(2,2,2) if e.flash>0 else Color.WHITE)
 			else: art_sprite("enemies",e.kind-2,e.p+offset+Vector2(0,10),82,e.p.x<player.x,Color(2,2,2) if e.flash>0 else Color.WHITE)
 			if e.get("shield",false):
 				draw_arc(e.p+offset-Vector2(0,30),48,-PI/2 if e.p.x<player.x else PI/2,PI/2 if e.p.x<player.x else PI*1.5,24,Color("ffda77"),4)
@@ -1172,7 +1245,8 @@ func _draw():
 			draw_circle(b.p+offset,b.r,Color("c784ff"))
 			draw_circle(b.p+offset,b.r*0.45,Color.WHITE)
 			continue
-		var color = PINK if b.enemy else (Color("ffe28a") if b.damage==4 else CYAN)
+		var color = PINK if b.enemy else (Color("ffe28a") if b.get("reflected",false) else CYAN)
+		if b.get("reflected",false): draw_line(b.p+offset,b.p+offset-b.v.normalized()*30,Color(1,0.85,0.4,0.6),4)
 		draw_circle(b.p+offset,b.r+5,Color(color,0.16))
 		if b.enemy:
 			draw_colored_polygon(PackedVector2Array([b.p+offset+Vector2(0,-b.r),b.p+offset+Vector2(b.r,0),b.p+offset+Vector2(0,b.r),b.p+offset+Vector2(-b.r,0)]),color)
@@ -1202,6 +1276,11 @@ func _draw():
 		var full = charge>=FULL_CHARGE
 		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/FULL_CHARGE,36,Color("ffe28a") if full else (CYAN if charge>=0.8 else PINK),3 if full else 2)
 		if full: draw_circle(player+offset-Vector2(0,45),46+sin(clock*20)*3,Color(1,0.85,0.45,0.12))
+	for mark in parry_marks:
+		var age = mark.age/0.28
+		var center = mark.p+offset
+		draw_arc(center,12+age*55,0,TAU,40,Color(1,0.9,0.45,1-age),3)
+		draw_arc(center,8+age*35,-age*3,PI-age*3,24,Color(1,1,1,1-age),4)
 	draw_field(offset)
 	for gate in gates:
 		if absf(gate.x-player.x)<1500: draw_door(gate,offset)
@@ -1212,6 +1291,9 @@ func _draw():
 	if state == "clear":
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
 		art_sprite("poses",3,Vector2(1090,535),220)
+		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else ""),14,Color("ffe28a"))
+		txt(Vector2(875,395),clear_rank(),78,Color("ffe28a"))
+		txt(Vector2(300,501),"SCORE %07d   最大コンボ %d   被ダメージ %d"%[score,max_combo,damage_taken],20,Color("ffe28a"))
 		txt(Vector2(440,525),"Enter / A / クリックでもう一度",24,CYAN)
 
 func draw_field(offset: Vector2):
@@ -1221,8 +1303,8 @@ func draw_field(offset: Vector2):
 		for k in range(2):
 			var lx = searchlight_x(room,k)+offset.x
 			if lx<-80 or lx>W+80: continue
-			draw_colored_polygon(PackedVector2Array([Vector2(lx-6,112),Vector2(lx+6,112),Vector2(lx+55,610),Vector2(lx-55,610)]),Color(1,0.95,0.6,0.16 if alert_cool<=0 else 0.3))
-			draw_circle(Vector2(lx,112),9,Color("ffe28a"))
+			draw_colored_polygon(PackedVector2Array([Vector2(lx-6,132),Vector2(lx+6,132),Vector2(lx+55,610),Vector2(lx-55,610)]),Color(1,0.95,0.6,0.16 if alert_cool<=0 else 0.3))
+			env_sprite("devices",2,Rect2(lx-20,96,40,48))
 	match field_area():
 		1:
 			var phase = surge_phase()
@@ -1233,10 +1315,8 @@ func draw_field(offset: Vector2):
 				if phase=="warn":
 					draw_rect(Rect2(left,600,p.size.x,10),Color(1,0.3,0.6,0.3+0.25*sin(clock*22)))
 				else:
-					draw_rect(Rect2(left,594,p.size.x,18),Color(0.6,1,1,0.35))
-					for x in range(int(left),int(left+p.size.x)-12,24):
-						var jitter = sin(clock*60+x)*5
-						draw_line(Vector2(x,606+jitter),Vector2(x+12,596-jitter),Color("e8ffff"),3)
+					draw_rect(Rect2(left,594,p.size.x,18),Color(0.6,1,1,0.18))
+					env_strip("electricity",int(clock*18)%4,Rect2(left,587,p.size.x,30),110)
 			if phase=="warn": txt(Vector2(W/2-150,220),"⚡ 床に電流 — 足場へ上がれ！",22,PINK)
 		2:
 			var push = wind_push()
@@ -1244,8 +1324,17 @@ func draw_field(offset: Vector2):
 			for i in range(26):
 				var x = fposmod(i*157.0+clock*1100*signf(push),W+200)-100
 				var y = 140+fmod(i*53.0,440)
-				draw_line(Vector2(x,y),Vector2(x-signf(push)*absf(push)*0.35,y),Color(0.8,0.95,1,0.35),2)
+				env_sprite("wind",int(clock*14)%4,Rect2(x-95,y-15,190,30),push<0,Color(1,1,1,0.36))
 		5:
+			draw_rect(Rect2(0,119,W,24),Color("26344a"))
+			for x in range(0,int(W),64): draw_circle(Vector2(x+12,127),3,Color("687e92"))
+			var phase=ceiling_phase()
+			if phase=="on": env_strip("electricity",int(clock*18)%4,Rect2(0,130,W,20),110)
+			elif phase=="warn": draw_rect(Rect2(0,134,W,10),Color(1,0.75,0.3,0.4+sin(clock*18)*0.3))
+			txt(Vector2(26,195),"空中は慣性が強い / ↓・Sで急降下",17,CYAN)
+			if phase!="off":
+				draw_rect(Rect2(340,678,610,32),Color(0.02,0.04,0.1,0.88))
+				txt(Vector2(365,701),"天井の電流に注意！ 上がりすぎる前に↓で急降下",18,PINK if phase=="on" else Color("ffe28a"))
 			for i in range(32):
 				var x = fposmod(i*97.3-camera_x*0.3,W)
 				var y = fposmod(600-clock*35-i*41,480)+120
@@ -1257,35 +1346,30 @@ func draw_door(gate: Dictionary, offset: Vector2):
 	# What lies past a closed door stays hidden.
 	if player.x<gate.x and not gate.passed: draw_rect(Rect2(x+24,0,maxf(0,W-x-24),H),Color(0.01,0.015,0.04,0.97*(1-gate.lift)))
 	# Permanent bulkhead and jambs; only the lower doorway retracts.
-	draw_rect(Rect2(x-24,0,48,DOOR_TOP),Color("26344a"))
-	for y in range(120,int(DOOR_TOP)-20,60):
-		draw_line(Vector2(x-20,y),Vector2(x+20,y),Color("3e526b"),3)
+	for y in range(0,int(DOOR_TOP),172):
+		var height=minf(172,DOOR_TOP-y)
+		env_sprite("doors",3,Rect2(x-24,y,48,height),false,Color.WHITE,Vector2(1,height/172.0))
 	draw_rect(Rect2(x-30,0,8,DOOR_FLOOR),Color("42536b"))
 	draw_rect(Rect2(x+22,0,8,DOOR_FLOOR),Color("42536b"))
 	draw_rect(Rect2(x-30,DOOR_TOP-20,60,20),Color("5b7188"))
 	var panel = Rect2(x-22,DOOR_TOP,44,maxf(0,door_gap_top(gate)-DOOR_TOP))
 	var cracked = gate.kind=="break" and gate.hp<21
 	if panel.size.y>0:
-		draw_rect(panel,Color("3a4a66") if not cracked or gate.passed else Color("5a4a46"))
-		for y in range(int(DOOR_TOP)+18,int(panel.end.y)-4,32): draw_line(Vector2(x-20,y),Vector2(x+20,y),Color("22304a"),3)
+		var frame=clampi(3-ceili(gate.hp/7.0),0,2) if cracked and not gate.passed else 0
+		env_sprite("doors",frame,panel,false,Color.WHITE,Vector2(1,panel.size.y/(DOOR_FLOOR-DOOR_TOP)))
 	var ready = door_ready(gate)
 	var light = PINK if gate.passed else (CYAN if gate.open or ready else (Color("ffe28a") if gate.kind=="switch" else (Color("ffb35a") if gate.kind=="break" else PINK)))
 	draw_circle(Vector2(x,DOOR_TOP-10),6,Color(light,0.7+sin(clock*6)*0.2))
-	if gate.kind=="break" and not gate.passed:
-		for k in range(3-ceili(gate.hp/7.0)):
-			var y = DOOR_TOP+38+k*35
-			if y+20<panel.end.y: draw_line(Vector2(x-18,y),Vector2(x+16,y+20),Color("ffb35a"),3)
 	for s in gate.switches:
 		var c = s.p+offset
-		draw_rect(Rect2(c-Vector2(14,22),Vector2(28,44)),Color("1b2234"))
-		draw_rect(Rect2(c-Vector2(9,16),Vector2(18,32)),Color("ffe28a") if s.on else Color(1,0.35,0.5,0.7+sin(clock*8)*0.3))
+		env_sprite("devices",1 if s.on else 0,Rect2(c-Vector2(14,22),Vector2(28,44)))
 	if gate.passed:
 		txt(Vector2(x-44,DOOR_TOP-30),"後方ロック",15,PINK)
 		return
 	if gate.open:
 		txt(Vector2(x-150,DOOR_TOP-30),"通過後に閉鎖・逆走できません",16,CYAN)
 		return
-	var hint = {"sync":"コアを同期 ＋ 区画の敵を全滅で開く","switch":"光るスイッチを撃って開ける","kill":"コア回収後の待ち伏せを全滅で開く","break":"ため撃ちで扉のロックを破壊"}[gate.kind]
+	var hint = {"sync":"コアを同期 ＋ 区画の敵を全滅で開く","switch":"光るスイッチを撃って開ける","kill":"コア回収後、搬送路の番人を倒して開く","break":"ため撃ちで扉のロックを破壊"}[gate.kind]
 	txt(Vector2(x-320,235),hint,18,light)
 
 func draw_background():
@@ -1308,6 +1392,7 @@ func draw_title():
 	txt(Vector2(94,326),"SPARK",82,PINK)
 	txt(Vector2(100,374),"ルミナ・スパーク",26)
 	txt(Vector2(100,417),"夜空の発電都市へ。暴走した星炉を止めよう。",21,Color("bdcbe2"))
+	txt(Vector2(100,445),"BEST SCORE  %07d"%best_score,16,Color("ffe28a"))
 	draw_rect(Rect2(100,462,360,64),CYAN)
 	txt(Vector2(145,504),"出撃する  /  ENTER",25,Color("102536"))
 	draw_rect(Rect2(100,542,480,44),Color("21314a"))
@@ -1329,6 +1414,8 @@ func draw_hud():
 	draw_rect(Rect2(118,63,190,17),Color("29344b"))
 	draw_rect(Rect2(118,63,190*float(hp)/max_hp,17),CYAN)
 	txt(Vector2(340,50),sector_names[mini(6,int(player.x/(ROOM*4)))],22)
+	txt(Vector2(780,45),"%07d pt"%score,21,Color("ffe28a"))
+	if combo>1: txt(Vector2(780,64),"連続撃破 %d  ×%.1f"%[combo,combo_multiplier()],13,Color("ffe28a"))
 	# Saber energy: one notch per swing.
 	var en_color = PINK if energy_flash>0 and int(clock*16)%2==0 else (Color("ffe28a") if energy>=SABER_COST else Color("8a7a52"))
 	draw_rect(Rect2(118,84,190,7),Color("29344b"))
@@ -1347,6 +1434,12 @@ func draw_hud():
 		draw_rect(Rect2(370,665,540,24),Color("30233f"))
 		draw_rect(Rect2(370,665,540*float(boss_hp)/boss_max_hp,24),PINK)
 		txt(Vector2(470,651),"ASTER GUARDIAN",19)
+	else:
+		for enemy in enemies:
+			if enemy.kind==6 and enemy.hp>0 and absf(enemy.p.x-player.x)<1300:
+				draw_rect(Rect2(430,668,420,14),Color("30233f"))
+				draw_rect(Rect2(430,668,420*enemy.hp/112.0,14),Color("ffb35a"))
+				txt(Vector2(485,654),"搬送路の番人 / CARGO SENTINEL",18,Color("ffb35a"))
 
 func panel(title: String, subtitle: String, detail: String):
 	draw_rect(Rect2(0,0,W,H),Color(0.015,0.025,0.06,0.85))
@@ -1482,7 +1575,7 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "stage", "surge", "door", "door-open", "door-locked", "movers", "ice", "breakdoor", "defense", "summit", "boss", "phase2", "bullets", "clear"]:
+	for scene in ["title", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
 		if scene == "stage":
 			start_game()
 			player = Vector2(1500,610)
@@ -1507,12 +1600,39 @@ func capture_qa():
 			camera_x=door.x-500
 			banner_time=0
 		if scene in ["movers","ice","defense","summit"]:
+			if scene=="ice":
+				for e in enemies:
+					if e.kind==6: e.hp=0
 			var room = {"movers":8,"ice":12,"defense":16,"summit":23}[scene]
 			elapsed = 1.5 if scene=="movers" else 0.0
 			player = Vector2(room*ROOM+180,610)
 			camera_x = room*ROOM
 			if scene=="defense": charge = 1.1
 			else: charge = 0
+		if scene in ["miniboss","miniboss-rush"]:
+			var base=11*ROOM
+			for core in cores:
+				if core.room<=11: core.got=true;core.sync=0
+			core_count=3
+			score=1500
+			if scene=="miniboss": spawn_enemy(Vector2(base+820,600),6,11)
+			for e in enemies:
+				if e.kind!=6: continue
+				e.mode="tell" if scene=="miniboss" else "rush"
+				e.mt=0.6
+				e.cycle=0 if scene=="miniboss" else 1
+				e.dir=-1.0
+			player=Vector2(base+500,610)
+			camera_x=base+100
+			elapsed=1.5
+			banner_time=0
+		if scene in ["low-gravity","ceiling"]:
+			player=Vector2(21*ROOM+500,310 if scene=="low-gravity" else 244)
+			camera_x=player.x-390
+			elapsed=3.6 if scene=="low-gravity" else 4.6
+			grounded=false
+			banner_time=0
+			velocity=Vector2(220,100)
 		if scene == "boss":
 			player = Vector2(BOSS_X+300,610)
 			camera_x = END_X-W
@@ -1541,7 +1661,44 @@ func capture_qa():
 			popup(player-Vector2(0,110),"JUST!",Color("ffe28a"))
 		if scene == "clear":
 			boss_hp = 0
+			boss_active=false
+			player=Vector2(BOSS_X+350,610)
+			camera_x=END_X-W
+			velocity=Vector2.ZERO
+			charge=0
+			popups.clear()
 			state = "clear"
+			elapsed=565
+			score=23600
+			max_combo=8
+			damage_taken=4
+			deaths=0
+			core_count=6
+			kills=62
+			reward_clear()
+		if scene=="reflect":
+			bullets.clear()
+			boss_rays.clear()
+			player=Vector2(BOSS_X+350,610)
+			grounded=true
+			boss_intro=0
+			boss_hp=240
+			parry_marks.append({"p":player+Vector2(90,-65),"age":0.08})
+			bullets.append({"p":player+Vector2(150,-65),"v":Vector2(900,0),"enemy":false,"reflected":true,"damage":4,"r":9.0,"life":1.0})
+			popup(player+Vector2(15,-110),"反射ダメージ ×2",Color("ffe28a"))
+		if scene=="combo":
+			boss_active=false
+			popups.clear()
+			player=Vector2(15*ROOM+400,610)
+			camera_x=player.x-390
+			grounded=true
+			velocity=Vector2.ZERO
+			score=15850
+			combo=6
+			max_combo=8
+			combo_timer=2.5
+			parry_marks.clear()
+			bullets.clear()
 		queue_redraw()
 		await get_tree().process_frame
 		await RenderingServer.frame_post_draw
@@ -1560,6 +1717,9 @@ func art_sprite(name: String, frame: int, feet: Vector2, height: float, flip = f
 	draw_set_transform(Vector2.ZERO)
 
 func update_fx(dt: float):
+	for i in range(parry_marks.size()-1,-1,-1):
+		parry_marks[i].age+=dt
+		if parry_marks[i].age>=0.28: parry_marks.remove_at(i)
 	for i in range(fx.size()-1,-1,-1):
 		fx[i].age += dt
 		if fx[i].age>=0.5: fx.remove_at(i)
@@ -1978,6 +2138,7 @@ func draw_rig_foot(side: String, ankle: Vector2, pitch: float, at: Vector2):
 	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2(0,top_uv),Vector2(1,top_uv),Vector2.ONE,Vector2(0,1)]),texture)
 
 func enemy_rect(enemy: Dictionary) -> Rect2:
+	if enemy.kind==6: return Rect2(enemy.p-Vector2(63,132),Vector2(126,142))
 	return Rect2(enemy.p-Vector2(35,72),Vector2(70,82))
 
 func saber_active() -> bool:
@@ -2000,8 +2161,7 @@ func update_saber():
 		burst(enemy.p,CYAN,12)
 		hitstop = 0.045
 		if enemy.hp<=0:
-			kills += 1
-			fx.append({"p":enemy.p-Vector2(0,20),"age":0.0,"size":100.0})
+			register_enemy_defeat(enemy)
 	if boss_active and boss_hp>0 and boss_intro<=0 and not saber_boss_hit and saber_rect().intersects(Rect2(boss_pos-Vector2(70,160),Vector2(140,180))):
 		saber_boss_hit = true
 		boss_hp -= 8
@@ -2013,3 +2173,142 @@ func update_saber():
 			boss_rays.clear()
 			music.stop()
 			shake=15
+
+func combo_multiplier() -> float:
+	return 1.0+minf(10,maxi(0,combo-1))*0.1
+
+func register_enemy_defeat(enemy: Dictionary):
+	if enemy.get("scored",false): return
+	enemy.scored=true
+	kills+=1
+	combo=combo+1 if combo_timer>0 else 1
+	max_combo=maxi(max_combo,combo)
+	combo_timer=3.0
+	var points=int([100,150,200,200,150,200,2000][enemy.kind]*combo_multiplier())
+	score+=points
+	popup(enemy.p-Vector2(0,80),"+%d"%points,Color("ffe28a"))
+	hitstop=0.07 if enemy.kind==6 else 0.045
+	fx.append({"p":enemy.p-Vector2(0,40),"age":0.0,"size":170.0 if enemy.kind==6 else 100.0})
+	burst(enemy.p,Color("ffc578"),30 if enemy.kind==6 else 18)
+	if kills%4==0 or enemy.kind==6:
+		var drop=enemy.p-Vector2(0,25)
+		var floor_y=610.0
+		for platform in platforms:
+			if drop.x>=platform.position.x and drop.x<=platform.end.x and platform.position.y>=drop.y: floor_y=minf(floor_y,platform.position.y)
+		pickups.append(Vector2(drop.x,floor_y-30))
+	if enemy.kind==6:
+		banner="搬送路の番人を撃破！ 出口へ進もう"
+		banner_time=3
+		sound("win")
+
+func reflection_reward(at: Vector2):
+	score+=150
+	parry_marks.append({"p":at,"age":0.0})
+	popup(at-Vector2(30,40),"反射ダメージ ×2",Color("ffe28a"))
+	shake=maxf(shake,4)
+	hitstop=maxf(hitstop,0.065)
+
+func clear_rank() -> String:
+	if deaths==0 and damage_taken<=6 and elapsed<=600 and max_combo>=3: return "S"
+	if deaths<=1 and damage_taken<=18 and elapsed<=780 and max_combo>=2: return "A"
+	if deaths<=3 and damage_taken<=40 and elapsed<=960: return "B"
+	return "C"
+
+func reward_clear():
+	if clear_rewarded: return
+	clear_rewarded=true
+	score+=2000
+	if damage_taken==0: score+=1500
+	if score>best_score:
+		best_score=score
+		if not fixed_seed and not capture_mode:
+			var records=ConfigFile.new()
+			records.load(record_path)
+			records.set_value("records","score",best_score)
+			records.set_value("records","rank",clear_rank())
+			records.save(record_path)
+
+func update_miniboss(enemy: Dictionary, dt: float):
+	if door_between(enemy.p.x,player.x): return
+	if enemy.p.x<camera_x+30 or enemy.p.x>camera_x+W-30: return
+	enemy.mt-=dt
+	enemy.fire_pose=maxf(0,enemy.get("fire_pose",0.0)-dt)
+	var base=enemy.room*ROOM
+	match enemy.mode:
+		"intro":
+			if enemy.mt<=0: enemy.mode="tell"; enemy.mt=0.8
+		"tell":
+			enemy.dir=1.0 if player.x>enemy.p.x else -1.0
+			if enemy.mt<=0:
+				if enemy.cycle==1:
+					enemy.mode="rush"; enemy.mt=0.75
+				else:
+					if enemy.cycle==0:
+						var from=enemy.p-Vector2(0,80)
+						var aim=(player-Vector2(0,45)-from).normalized()
+						for angle in [-0.23,0.0,0.23]: enemy_shot(from,aim.rotated(angle)*(210 if easy else 260),10)
+					else:
+						for direction in [-1,1]: enemy_shot(Vector2(enemy.p.x+direction*35,596),Vector2(direction*(210 if easy else 270),0),11,"solid")
+					enemy.fire_pose=0.22
+					enemy.mode="recover"; enemy.mt=0.9
+					sound("shot")
+		"rush":
+			enemy.p.x=clampf(enemy.p.x+enemy.dir*(300 if easy else 390)*dt,base+310,base+990)
+			if enemy.mt<=0: enemy.mode="recover"; enemy.mt=0.9
+		"recover":
+			if enemy.mt<=0:
+				enemy.cycle=(enemy.cycle+1)%3
+				enemy.mode="tell"; enemy.mt=0.8
+	if (player-Vector2(0,40)).distance_to(enemy.p-Vector2(0,50))<80: hurt(1 if easy else 2)
+
+func env_sprite(name: String, frame: int, target: Rect2, flip=false, tint=Color.WHITE, coverage=Vector2.ONE):
+	if not environment_art.has(name): return
+	var entry=environment_art[name]
+	var region=entry.regions[frame]
+	region.size*=coverage
+	draw_set_transform(target.position+Vector2(target.size.x if flip else 0,0),0,Vector2(-1 if flip else 1,1))
+	draw_texture_rect_region(entry.texture,Rect2(Vector2.ZERO,target.size),region,tint)
+	draw_set_transform(Vector2.ZERO)
+
+func env_strip(name: String, frame: int, target: Rect2, tile_width: float):
+	var x=0.0
+	while x<target.size.x:
+		var width=minf(tile_width,target.size.x-x)
+		env_sprite(name,frame,Rect2(target.position+Vector2(x,0),Vector2(width,target.size.y)),false,Color.WHITE,Vector2(width/tile_width,1))
+		x+=width
+
+func draw_miniboss(enemy: Dictionary, offset: Vector2):
+	if not environment_art.has("miniboss"): return
+	var entry=environment_art.miniboss
+	var frame=2 if enemy.mode=="rush" or enemy.get("fire_pose",0.0)>0 else (1 if enemy.mode=="tell" else 0)
+	var region=entry.regions[frame]
+	var anchor=Vector2(entry.anchors[frame][0],entry.anchors[frame][1])
+	var flip=enemy.dir>0
+	var feet=enemy.p+offset+Vector2(0,10)
+	var tint=Color(2,2,2) if enemy.flash>0 else Color.WHITE
+	draw_set_transform(feet,0,Vector2(-1 if flip else 1,1))
+	draw_texture_rect_region(entry.texture,Rect2(-anchor*entry.scale,region.size*entry.scale),region,tint)
+	draw_set_transform(Vector2.ZERO)
+	if enemy.mode=="tell":
+		var center=enemy.p+offset-Vector2(0,80)
+		draw_arc(center,66+sin(clock*18)*4,0,TAU,32,Color("ffb35a"),3)
+		var label=["3方向射撃","突進に注意","床衝撃波！ ジャンプ"][enemy.cycle]
+		txt(Vector2(500,630),"予告："+label,17,Color("ffb35a"))
+
+func set_bgm(track: String, restart=false):
+	if music_track==track and not restart: return
+	if music_fade and music_fade.is_valid(): music_fade.kill()
+	music_track=track
+	music.stop()
+	music.stream=bgm[track]
+	music.volume_db=-30
+	if not muted: music.play()
+	music_fade=create_tween()
+	music_fade.tween_property(music,"volume_db",-18.0,0.4)
+
+func update_music_state():
+	if state!="play": return
+	var battle=boss_active and boss_hp>0
+	for enemy in enemies:
+		if enemy.kind==6 and enemy.hp>0 and absf(enemy.p.x-player.x)<1300 and not door_between(enemy.p.x,player.x): battle=true
+	set_bgm("boss" if battle else "stage")

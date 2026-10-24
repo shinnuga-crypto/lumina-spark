@@ -9,6 +9,7 @@ $jobs=@(
     @{Name='self-test'; Args='--headless -- --self-test'},
     @{Name='doors'; Args='--headless --script res://tools/door_test.gd'},
     @{Name='motion'; Args='--headless -- --motion-test'},
+    @{Name='improvements'; Args='--headless --script res://tools/improvement_test.gd'},
     @{Name='route'; Args='--headless --script res://tools/route_test.gd'}
 )
 if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}; $jobs+=@{Name='motion-capture'; Args='-- --capture-motion'}}

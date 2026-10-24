@@ -30,3 +30,8 @@ NEW sprite sheet. EXACTLY TWO COLUMNS TWO ROWS (2x2), four equal SQUARE cells in
 
 ### enemies-v2.png（採用版）
 NEW sprite sheet. EXACTLY TWO COLUMNS TWO ROWS (2x2), four equal square cells in SQUARE canvas. Each robot occupies central 65% of its cell with generous empty transparent gutters. Top left: navy ground shield robot facing LEFT. Top right: wall-mounted gun turret facing LEFT. Bottom left: orange wheeled ramming robot facing LEFT. Bottom right: purple hovering bomber with downward hatch, no detached bombs. Full isolated silhouettes, no overlap, no labels. Same polished anime art as reference. Transparent.
+
+
+## 2026-10-24 改善案1〜4
+
+扉4枠・機器3枠・電流4コマ・風4コマ・搬送路ミニボス3枠を組み込みGPTImageで生成。採用画像・全プロンプト・切り出し方は [improvements/PROMPTS.md](improvements/PROMPTS.md)。BGMはユーザー提供曲へ変更（audio/README.md）。
