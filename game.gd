@@ -951,10 +951,11 @@ func shoot(big: bool, full = false):
 # kind: "solid" cannot be cut by the saber, "home" steers toward Lumina, "bomb" falls and splits on the floor.
 func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
 	if danmaku and vel.length()>1:
-		# Three times the fire: floor waves come at three speeds, everything else fans out.
+		# Five times the fire, loosely scattered: floor waves at mixed speeds, everything else in a wide uneven fan.
 		var floor_wave = absf(vel.y)<1 and pos.y>=585
-		for k in [-1,0,1]:
-			add_enemy_bullet(pos,vel*(1.0+k*0.28) if floor_wave else vel.rotated(k*0.2),radius,kind)
+		for k in [-2,-1,0,1,2]:
+			if floor_wave: add_enemy_bullet(pos,vel*(1.0+k*0.22+rng.randf_range(-0.08,0.08)),radius,kind)
+			else: add_enemy_bullet(pos,vel.rotated(k*0.32+rng.randf_range(-0.12,0.12))*rng.randf_range(0.8,1.15),radius,kind)
 	else: add_enemy_bullet(pos,vel,radius,kind)
 
 func add_enemy_bullet(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
@@ -2287,7 +2288,7 @@ func motion_test():
 	bullets.clear()
 	danmaku=true
 	enemy_shot(Vector2(600,400),Vector2.LEFT*200)
-	if bullets.size()!=3: errors.append("danmaku triples fire")
+	if bullets.size()!=5: errors.append("danmaku five-fold fire")
 	bullets.clear()
 	saber_cooldown=0
 	saber_time=0
