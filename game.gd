@@ -100,6 +100,7 @@ const FULL_CHARGE = 1.6
 # The saber is active while saber_time is 0.07..0.28; only its first 0.05 s reflects.
 const JUST_WINDOW = 0.23
 const DOOR_KINDS = ["sync","switch","kill","break","sync","switch"]
+var fixed_seed = false
 var alert_cool = 0.0
 var music: AudioStreamPlayer
 var sfx: Dictionary = {}
@@ -166,6 +167,7 @@ func _ready():
 	for name in motion_meta.rig:
 		rig_textures[name] = load("res://assets/motion/"+motion_meta.rig[name].file)
 	build_level()
+	fixed_seed = OS.get_cmdline_user_args().size()>0
 	if "--self-test" in OS.get_cmdline_user_args():
 		muted = true
 		call_deferred("self_test")
@@ -207,7 +209,7 @@ func build_level():
 			var origin = Vector2(x+m[0],m[1])
 			moving.append({"index":platforms.size(),"origin":origin,"amp":Vector2(m[3],m[4]),"speed":m[5],"delta":Vector2.ZERO})
 			platforms.append(Rect2(origin,Vector2(m[2],24)))
-		for e in d.enemies: spawn_enemy(Vector2(x+e[1],e[2]),int(e[0]),room)
+		for e in d.enemies: place_enemy(Vector2(x+e[1],e[2]),int(e[0]),room)
 		for l in d.lasers: lasers.append({"x":x+l,"phase":float(room)*0.7})
 		if not d.platforms.is_empty():
 			var top = d.platforms[-1]
@@ -224,10 +226,36 @@ func build_level():
 	platforms.append(Rect2(BOSS_X+260,460,180,24))
 	platforms.append(Rect2(BOSS_X+730,460,180,24))
 
+# Layout positions are only a starting point: each run shifts enemies around
+# and sometimes swaps in another enemy of the same family already met in this area.
+func place_enemy(pos: Vector2, kind: int, room: int):
+	var area = int(room/4)
+	var ground = kind in [0,2,4]
+	if rng.randf()<0.3:
+		var pool = ([0]+([4] if area>=3 else [])+([2] if area>=4 else [])) if ground else ([1]+([5] if area>=2 else []))
+		if kind!=3: kind = pool[rng.randi()%pool.size()]
+	var lo = room*ROOM+180
+	var hi = room*ROOM+1030
+	for attempt in range(8):
+		var p = pos
+		if ground or kind==3:
+			p.x = clampf(pos.x+rng.randf_range(-170,170),lo,hi)
+			if kind==3 and pos.y<590: p.x = clampf(pos.x+rng.randf_range(-60,60),lo,hi)
+			if pos.y>=590 and not on_ground(p.x-30,610) or pos.y>=590 and not on_ground(p.x+30,610): continue
+			if kind==3 and pos.y<590 and not on_ground(p.x,pos.y+50): continue
+		else:
+			p = Vector2(clampf(pos.x+rng.randf_range(-180,180),lo,hi),clampf(pos.y+rng.randf_range(-60,50),300,460))
+		pos = p
+		break
+	spawn_enemy(pos,kind,room)
+
 func spawn_enemy(pos: Vector2, kind: int, room: int):
 	enemies.append({"p":pos,"origin":pos,"kind":kind,"room":room,"hp":[8,6,12,10,8,10][kind],"shield":kind==2,"t":rng.randf_range(0,5),"shot":rng.randf_range(0.6,2),"flash":0.0})
 
 func start_game():
+	# Tests replay the same run; normal play gets a fresh enemy arrangement every time.
+	if fixed_seed: rng.seed = 7234
+	else: rng.randomize()
 	hp = 20 if easy else 12
 	max_hp = hp
 	player = Vector2(130, 500)
@@ -497,8 +525,8 @@ func update_game(dt: float):
 			if (core.sync<8 and core.waves==0) or (core.sync<4 and core.waves==1):
 				core.waves += 1
 				var base = core.room*ROOM
-				spawn_enemy(Vector2(base+450,600),4 if core.room>=12 else 0,core.room)
-				spawn_enemy(Vector2(base+900,390),5 if core.room>=8 else 1,core.room)
+				place_enemy(Vector2(base+450,600),4 if core.room>=12 else 0,core.room)
+				place_enemy(Vector2(base+900,390),5 if core.room>=8 else 1,core.room)
 				banner = "増援接近  %d / 2  —  同期完了まで守り抜こう"%core.waves
 				banner_time = 2
 
@@ -521,9 +549,9 @@ func update_game(dt: float):
 				"kill":
 					core.sync = 0
 					var base = core.room*ROOM
-					spawn_enemy(Vector2(base+300,600),0,core.room)
-					spawn_enemy(Vector2(base+560,380),1,core.room)
-					spawn_enemy(Vector2(base+900,390),5,core.room)
+					place_enemy(Vector2(base+300,600),0,core.room)
+					place_enemy(Vector2(base+560,380),1,core.room)
+					place_enemy(Vector2(base+900,390),5,core.room)
 					banner = "スターコア回収  %d / 6  —  待ち伏せだ！ 全滅させて扉を開けよう"%core_count
 	for laser in lasers:
 		if fmod(elapsed+laser.phase,3.6)>2.2 and absf(player.x-laser.x)<55 and player.y>574:

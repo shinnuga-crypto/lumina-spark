@@ -33,6 +33,7 @@ func run():
 	game.muted=true
 	game.set_process(false)
 	game.set_physics_process(false)
+	game.fixed_seed=true
 	game.start_game()
 	var failures=[]
 	for room in range(24):
