@@ -33,6 +33,7 @@ func run():
 	fresh(1); g.player=Vector2(500,570); g.enemies.clear()
 	for airborne in [false,true]:
 		g.grounded=not airborne
+		g.player.y=570 if airborne else 610
 		g.velocity=Vector2.ZERO if airborne else Vector2(180,0)
 		for i in range(8):
 			g.aim_override=Vector2.RIGHT.rotated(i*TAU/8); g.bullets.clear(); g.shoot(i==7)
