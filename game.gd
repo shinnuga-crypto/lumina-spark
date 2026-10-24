@@ -1349,7 +1349,9 @@ func walk_arm(phase: float, gun: bool) -> Dictionary:
 	var part = motion_meta.rig[name]
 	var origin = Vector2(part.origin[0],part.origin[1])
 	var tip = Vector2(part.end[0],part.end[1])
-	var angle = walk_lean()+cos(phase*TAU/8)*(-0.48 if gun else 0.48)
+	# Positive swings the arm back; a running swing reaches further forward than back.
+	var swing = cos(phase*TAU/8)*(-1.0 if gun else 1.0)
+	var angle = walk_lean()+(swing*0.6 if swing>0 else swing*0.95)
 	if gun and walk_aiming(): angle = part.aim_angle
 	var socket = root+((tip-origin)*part.scale).rotated(angle)
 	return {"root":root,"angle":angle,"muzzle":socket,"name":name,"scale":part.scale}
