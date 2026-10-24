@@ -41,3 +41,6 @@ for i,f in enumerate(result['walk']['frames']):
  d.line((x-5,y,x+5,y),fill='cyan');d.text(((i%4)*240+15,(i//4)*180+15),str(i+1),fill='white')
 canvas.save(root/'test-output/walk-sockets.png')
 print(json.dumps({n:{'scale':result[n]['scale'],'frames':len(result[n]['frames'])} for n in ['walk','saber']}))
+if (root/'assets/motion/rig-raw.png').exists():
+ import runpy
+ runpy.run_path(str(root/'tools/calibrate_hero.py'),run_name='__main__')

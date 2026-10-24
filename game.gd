@@ -23,6 +23,8 @@ var boss_rays: Array[Dictionary] = []
 var ending_time = 0.0
 var motions: Dictionary = {}
 var motion_meta: Dictionary = {}
+var rig_textures: Dictionary = {}
+var capture_mode = false
 var walk_phase = 0.0
 var saber_time = 0.0
 var saber_cooldown = 0.0
@@ -140,11 +142,13 @@ func _ready():
 			for r in measured[entry[0]]: rects.append(Rect2(r[0],r[1],r[2],r[3]))
 			art[entry[0]] = {"texture":tex,"regions":rects}
 	motion_meta = JSON.parse_string(FileAccess.get_file_as_string("res://assets/motion/animation.json"))
-	for name in ["walk","saber"]:
+	for name in ["saber"]:
 		var frames: Array = []
 		for entry in motion_meta[name].frames:
 			frames.append(load("res://assets/motion/"+entry.file))
 		motions[name] = frames
+	for name in motion_meta.rig:
+		rig_textures[name] = load("res://assets/motion/"+motion_meta.rig[name].file)
 	build_level()
 	if "--self-test" in OS.get_cmdline_user_args():
 		muted = true
@@ -297,7 +301,7 @@ func _unhandled_input(event):
 		elif state == "pause": state = "play"
 
 func _notification(what):
-	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and state == "play": state = "pause"
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and state == "play" and not capture_mode: state = "pause"
 
 func _process(dt):
 	clock += dt
@@ -480,7 +484,7 @@ func update_game(dt: float):
 			pickups.remove_at(i)
 			sound("heal")
 	if grounded and absf(velocity.x)>15:
-		walk_phase = fmod(walk_phase+dt*12.0*absf(velocity.x)/285.0,8.0)
+		walk_phase = fmod(walk_phase+absf(velocity.x)*dt/13.0,8.0)
 	else: walk_phase = 0
 	if shot_request>=0: shoot(shot_request==1)
 	update_enemies(dt)
@@ -794,7 +798,7 @@ func _draw():
 		draw_circle(p.p+offset,3,Color(p.c,clampf(p.life*2,0,1)))
 	for effect in fx: art_sprite("explosion",mini(5,int(effect.age*12)),effect.p+offset+Vector2(0,effect.size/2),effect.size)
 	if dash_timer>0:
-		for i in range(1,4): art_sprite("poses",0,player+offset-Vector2(facing*i*25,0),104,facing<0,Color(0.4,1,1,0.35/i))
+		for i in range(1,4): draw_hero(player+offset-Vector2(facing*i*25,0),Color(0.4,1,1,0.35/i))
 	if invincible<=0 or int(clock*18)%2==0: draw_hero(player+offset)
 	if muzzle_time>0 and saber_time<=0:
 		var region = art.muzzle.regions[mini(5,int((0.1-muzzle_time)*60))]
@@ -1003,6 +1007,7 @@ func test_key(code: int, down: bool):
 	Input.flush_buffered_events()
 
 func capture_qa():
+	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
 	for scene in ["title", "stage", "movers", "ice", "defense", "summit", "boss", "phase2", "clear"]:
@@ -1063,7 +1068,19 @@ func motion_test():
 	set_physics_process(false)
 	start_game()
 	var errors = []
-	if motions.walk.size()!=8 or motions.saber.size()!=6: errors.append("frame counts")
+	if rig_textures.size()!=5 or motions.saber.size()!=6: errors.append("rig and saber assets")
+	if gait_foot(0).x<=0 or gait_foot(4).x>=0: errors.append("same leg always in front")
+	for direction in [-1,1]:
+		for frame in range(5):
+			if absf(frame*13*direction+gait_foot(frame).x*direction-26*direction)>0.01: errors.append("stance sliding")
+	for frame in range(32):
+		var phase = frame/4.0
+		for side in ["near","far"]:
+			var leg = gait_leg(phase,side)
+			if absf(walk_hip(phase).distance_to(leg.knee)-24)>0.1 or absf(leg.knee.distance_to(leg.ankle)-29)>0.1: errors.append("leg length drift")
+			if absf(boot_floor(side,leg.knee,leg.ankle,leg.pitch)-leg.sole)>0.1: errors.append("foot below floor")
+	for calibrated in motion_meta.legacy_pose.values():
+		if absf(calibrated.head_metric*calibrated.scale-motion_meta.reference_head_metric)>0.1: errors.append("pose skull scale")
 	player = Vector2(180,610)
 	grounded = true
 	velocity = Vector2(285,0)
@@ -1114,6 +1131,7 @@ func motion_test():
 	get_tree().quit(0 if errors.is_empty() else 1)
 
 func capture_motion():
+	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
 	start_game()
@@ -1136,7 +1154,34 @@ func capture_motion():
 			await get_tree().process_frame
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png("res://test-output/motion-"+action+str(frame)+".png")
-	print("MOTION CAPTURE: PASS 28 frames")
+	for pose in ["idle","walk","jump","dash","hurt","charge","saber"]:
+		velocity=Vector2(285 if pose=="walk" else 0,0)
+		grounded=pose!="jump"
+		dash_timer=0.15 if pose=="dash" else 0.0
+		hurt_pose=0.2 if pose=="hurt" else 0.0
+		charge=1.0 if pose=="charge" else 0.0
+		saber_time=0.21 if pose=="saber" else 0.0
+		facing=1
+		muzzle_time=0
+		walk_phase=0
+		bullets.clear()
+		queue_redraw()
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("res://test-output/size-"+pose+".png")
+	grounded=true
+	dash_timer=0
+	hurt_pose=0
+	charge=0
+	saber_time=0
+	velocity=Vector2(285,0)
+	for frame in range(32):
+		walk_phase=frame/4.0
+		queue_redraw()
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("res://test-output/stride-"+str(frame)+".png")
+	print("MOTION CAPTURE: PASS 28 motion + 7 size + 32 interpolated frames")
 	get_tree().quit()
 
 func hero_visual() -> Dictionary:
@@ -1146,8 +1191,11 @@ func hero_visual() -> Dictionary:
 		name = "saber"
 		index = mini(5,int((0.42-saber_time)/0.07))
 	elif hurt_pose<=0 and dash_timer<=0 and grounded and absf(velocity.x)>15:
-		name = "walk"
-		index = int(walk_phase)%8
+		var body = motion_meta.rig.body
+		var hip = walk_hip(walk_phase)
+		var origin = Vector2(body.origin[0],body.origin[1])
+		var socket = Vector2(body.end[0],body.end[1])
+		return {"name":"walk","frame":int(walk_phase)%8,"anchor":origin-hip/body.scale,"muzzle":socket,"scale":body.scale,"texture":rig_textures.body,"region":Rect2(Vector2.ZERO,rig_textures.body.get_size())}
 	if name!="":
 		var meta = motion_meta[name].frames[index]
 		return {"texture":motions[name][index],"region":Rect2(0,0,256,256),"anchor":Vector2(meta.anchor[0],meta.anchor[1]),"muzzle":Vector2(meta.muzzle[0],meta.muzzle[1]),"scale":motion_meta[name].scale,"frame":index,"name":name}
@@ -1159,18 +1207,120 @@ func hero_visual() -> Dictionary:
 	elif not grounded: pose="jump"; region=regions[3]
 	elif charge>0.3: pose="charge"; tex=art.poses.texture; region=art.poses.regions[2]
 	var socket = motion_meta.legacy[pose]
-	return {"texture":tex,"region":region,"anchor":Vector2(region.size.x/2,region.size.y),"muzzle":Vector2(socket[0],socket[1])-region.position,"scale":104.0/region.size.y,"name":pose,"frame":0}
+	var calibrated = motion_meta.legacy_pose[pose]
+	return {"texture":tex,"region":region,"anchor":Vector2(calibrated.anchor[0],calibrated.anchor[1]),"muzzle":Vector2(socket[0],socket[1])-region.position,"scale":calibrated.scale,"name":pose,"frame":0}
 
 func muzzle_position() -> Vector2:
 	var visual = hero_visual()
 	var point = (visual.muzzle-visual.anchor)*visual.scale
 	return player+Vector2(point.x*facing,point.y)
 
-func draw_hero(at: Vector2):
+func draw_hero(at: Vector2, tint = Color.WHITE):
 	var visual = hero_visual()
+	if visual.name=="walk":
+		draw_walk_rig(at,walk_phase)
+		return
 	draw_set_transform(at,0,Vector2(facing,1))
-	draw_texture_rect_region(visual.texture,Rect2(-visual.anchor*visual.scale,visual.region.size*visual.scale),visual.region)
+	draw_texture_rect_region(visual.texture,Rect2(-visual.anchor*visual.scale,visual.region.size*visual.scale),visual.region,tint)
 	draw_set_transform(Vector2.ZERO)
+
+# Feet stay fixed in world space during stance; the other leg swings forward.
+# The same near/far artwork keeps its identity for the entire two-step cycle.
+func gait_foot(phase: float) -> Vector2:
+	var keys = [Vector2(26,-10),Vector2(13,-10),Vector2(0,-10),Vector2(-13,-10),Vector2(-26,-10),Vector2(-24,-25),Vector2(-2,-32),Vector2(20,-24)]
+	var index = int(floor(phase))%8
+	return keys[index].lerp(keys[(index+1)%8],fposmod(phase,1.0))
+
+func walk_hip(phase: float) -> Vector2:
+	return Vector2(0,-51+sin(phase*PI/2)*1.0)
+
+func gait_knee(hip: Vector2, ankle: Vector2) -> Vector2:
+	var delta = ankle-hip
+	var distance = clampf(delta.length(),1.0,52.99)
+	var direction = delta.normalized()
+	var along = (24.0*24.0-29.0*29.0+distance*distance)/(2*distance)
+	var bend = sqrt(maxf(0,24.0*24.0-along*along))
+	return hip+direction*along+Vector2(direction.y,-direction.x)*bend
+
+func draw_rig_bone(name: String, start: Vector2, end: Vector2, at: Vector2):
+	var part = motion_meta.rig[name]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var tip = Vector2(part.end[0],part.end[1])
+	var scale = (end-start).length()/origin.distance_to(tip)
+	var angle = (end-start).angle()-(tip-origin).angle()
+	var texture = rig_textures[name]
+	var height = float(part.foot_cut+45) if name.ends_with("boot") else float(texture.get_height())
+	var a = -origin*scale
+	var b = (Vector2(texture.get_width(),0)-origin)*scale
+	var c = (Vector2(texture.get_width(),height)-origin)*scale
+	var d = (Vector2(0,height)-origin)*scale
+	var points = PackedVector2Array()
+	for point in [a,b,c,d]:
+		var along = (tip-origin).normalized()
+		var across = Vector2(along.y,-along.x)
+		var widened = along*point.dot(along)+across*point.dot(across)*(1.25 if name.ends_with("thigh") else 1.0)
+		var position = start+widened.rotated(angle)
+		points.append(at+Vector2(position.x*facing,position.y))
+	var bottom_uv = height/texture.get_height()
+	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2.ZERO,Vector2(1,0),Vector2(1,bottom_uv),Vector2(0,bottom_uv)]),texture)
+
+func draw_walk_rig(at: Vector2, phase: float):
+	var hip = walk_hip(phase)
+	for side in ["far","near"]:
+		var leg = gait_leg(phase,side)
+		var ankle = leg.ankle
+		var knee = leg.knee
+		draw_rig_bone(side+"_thigh",hip,knee,at)
+		draw_rig_bone(side+"_boot",knee,ankle,at)
+		draw_rig_foot(side,ankle,leg.pitch,at)
+	var body = motion_meta.rig.body
+	var origin = Vector2(body.origin[0],body.origin[1])
+	draw_set_transform(at+Vector2(hip.x*facing,hip.y),0,Vector2(facing,1))
+	draw_texture_rect(rig_textures.body,Rect2(-origin*body.scale,rig_textures.body.get_size()*body.scale),false)
+	draw_set_transform(Vector2.ZERO)
+
+func boot_floor(side: String, knee: Vector2, ankle: Vector2, pitch = 0.0) -> float:
+	var part = motion_meta.rig[side+"_boot"]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var tip = Vector2(part.end[0],part.end[1])
+	var scale = knee.distance_to(ankle)/origin.distance_to(tip)
+	var bottom = -1000.0
+	for p in part.outline:
+		bottom = maxf(bottom,ankle.y+((Vector2(p[0],p[1])-tip)*scale).rotated(pitch).y)
+	return bottom
+
+func gait_leg(phase: float, side: String) -> Dictionary:
+	var hip = walk_hip(phase)
+	var foot = gait_foot(fposmod(phase+(4 if side=="far" else 0),8.0))
+	var ankle = foot
+	var sole = foot.y+10
+	var local_phase = fposmod(phase+(4 if side=="far" else 0),8.0)
+	var pitches = [-0.12,0.0,0.0,0.18,0.35,0.1,-0.15,-0.15]
+	var index = int(local_phase)%8
+	var pitch = lerpf(pitches[index],pitches[(index+1)%8],fposmod(local_phase,1.0))
+	var part = motion_meta.rig[side+"_boot"]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var tip = Vector2(part.end[0],part.end[1])
+	var scale = 29.0/origin.distance_to(tip)
+	var extent = -1000.0
+	for p in part.outline: extent=maxf(extent,((Vector2(p[0],p[1])-tip)*scale).rotated(pitch).y)
+	ankle.y=sole-extent
+	var knee = gait_knee(hip,ankle)
+	return {"knee":knee,"ankle":ankle,"sole":sole,"pitch":pitch}
+
+func draw_rig_foot(side: String, ankle: Vector2, pitch: float, at: Vector2):
+	var name = side+"_boot"
+	var texture = rig_textures[name]
+	var part = motion_meta.rig[name]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var tip = Vector2(part.end[0],part.end[1])
+	var scale = 29.0/origin.distance_to(tip)
+	var points = PackedVector2Array()
+	for p in [Vector2(0,part.foot_cut),Vector2(texture.get_width(),part.foot_cut),texture.get_size(),Vector2(0,texture.get_height())]:
+		var position = ankle+((p-tip)*scale).rotated(pitch)
+		points.append(at+Vector2(position.x*facing,position.y))
+	var top_uv = float(part.foot_cut)/texture.get_height()
+	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2(0,top_uv),Vector2(1,top_uv),Vector2.ONE,Vector2(0,1)]),texture)
 
 func enemy_rect(enemy: Dictionary) -> Rect2:
 	return Rect2(enemy.p-Vector2(35,72),Vector2(70,82))
