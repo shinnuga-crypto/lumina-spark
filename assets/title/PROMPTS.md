@@ -21,4 +21,3 @@ A premium ORIGINAL Japanese sci-fi action game TITLE LOGO / wordmark, isolated o
 ## 組み込み
 
 `tools/measure_title.py` は透明余白を測定して `regions.json` を更新する。生成画像そのものは加工せず保存。タイトルは **LUMINA SPARK — 星炉のリベリオン —**。既存の記録保存先を保つため、プロジェクト識別名とフォルダー名は従来どおり。
-
