@@ -109,11 +109,8 @@ var prev_jump = false
 var prev_dash = false
 var prev_fire = false
 var fire_buffer = 0.0
-var energy = 100.0
-var energy_flash = 0.0
 var popups: Array[Dictionary] = []
-const ENERGY_MAX = 100.0
-const SABER_COST = 35.0
+const SABER_COOLDOWN = 0.75
 const FULL_CHARGE = 1.6
 # The saber is active while saber_time is 0.07..0.28; only its first 0.05 s reflects.
 const JUST_WINDOW = 0.23
@@ -124,6 +121,25 @@ const DOOR_HALF_WIDTH = 24.0
 const PLAYER_HALF_WIDTH = 20.0
 const DOOR_PLAYER_HEIGHT = 100.0
 var fixed_seed = false
+const ACTIONS = ["left","right","down","jump","fire","saber","dash"]
+const ACTION_NAMES = {"left":"左へ移動","right":"右へ移動","down":"下（足場から降りる・急降下）","jump":"ジャンプ","fire":"射撃（長押しでため撃ち）","saber":"セーバー","dash":"ダッシュ"}
+const PAD_LT = 100
+const PAD_RT = 101
+const DEFAULT_KEYS = {"left":[KEY_LEFT,KEY_A],"right":[KEY_RIGHT,KEY_D],"down":[KEY_DOWN,KEY_S],"jump":[KEY_SPACE,KEY_Z],"fire":[KEY_X,KEY_J,KEY_V],"saber":[KEY_K],"dash":[KEY_SHIFT,KEY_C]}
+const DEFAULT_PAD = {"left":[JOY_BUTTON_DPAD_LEFT],"right":[JOY_BUTTON_DPAD_RIGHT],"down":[JOY_BUTTON_DPAD_DOWN],"jump":[JOY_BUTTON_A],"fire":[JOY_BUTTON_X,JOY_BUTTON_Y],"saber":[JOY_BUTTON_RIGHT_SHOULDER],"dash":[JOY_BUTTON_B]}
+var key_binds: Dictionary = {}
+var pad_binds: Dictionary = {}
+var using_pad = false
+var bgm_level = 5
+var sfx_level = 5
+var settings_path = "user://settings.cfg"
+var settings_from = "title"
+var settings_index = 0
+var rebinding = ""
+var settings_note = ""
+var stick_nav: Dictionary = {}
+var charge_release = -1
+var drop_buffer = 0.0
 var run_seed = 7234
 var alert_cool = 0.0
 var music: AudioStreamPlayer
@@ -172,7 +188,8 @@ func _ready():
 		stream.loop=true
 		bgm[entry[0]]=stream
 	music.stream=bgm.stage
-	music.volume_db=-18
+	load_settings()
+	music.volume_db=level_db(bgm_level,-18.0)
 	for entry in [["poses",4],["enemies",4],["explosion",6],["charge",6],["muzzle",6],["tiles",3],["core",1]]:
 		var path = "res://assets/"+entry[0]+("-v2" if entry[0] in ["poses","enemies"] else "")+".png"
 		if ResourceLoader.exists(path):
@@ -229,11 +246,11 @@ func _ready():
 		call_deferred("capture_qa")
 
 func sound(name: String):
-	if muted or not sfx.has(name): return
+	if muted or sfx_level<=0 or not sfx.has(name): return
 	var a = AudioStreamPlayer.new()
 	add_child(a)
 	a.stream = sfx[name]
-	a.volume_db = -16
+	a.volume_db = level_db(sfx_level,-16.0)
 	a.finished.connect(a.queue_free)
 	a.play()
 
@@ -324,7 +341,6 @@ func start_game():
 	prev_fire = false
 	alert_cool = 0
 	fire_buffer = 0
-	energy = ENERGY_MAX
 	popups.clear()
 	camera_x = 0
 	elapsed = 0
@@ -378,14 +394,245 @@ func key(code: int) -> bool:
 func joy(button: int) -> bool:
 	return Input.is_joy_button_pressed(0, button)
 
+# --- Rebindable controls, volume and the settings screen ---
+func joy_any(button: int) -> bool:
+	if button==PAD_LT: return Input.get_joy_axis(0,JOY_AXIS_TRIGGER_LEFT)>0.5
+	if button==PAD_RT: return Input.get_joy_axis(0,JOY_AXIS_TRIGGER_RIGHT)>0.5
+	return joy(button)
+
+func act(name: String) -> bool:
+	for code in key_binds[name]:
+		if key(code): return true
+	for button in pad_binds[name]:
+		if joy_any(button): return true
+	if name=="down" and Input.get_joy_axis(0,JOY_AXIS_LEFT_Y)>0.55: return true
+	return false
+
+func key_name(code: int) -> String:
+	var symbols = {KEY_LEFT:"←",KEY_RIGHT:"→",KEY_UP:"↑",KEY_DOWN:"↓",KEY_SPACE:"SPACE",KEY_SHIFT:"SHIFT",KEY_CTRL:"CTRL",KEY_ALT:"ALT",KEY_TAB:"TAB",KEY_ENTER:"ENTER"}
+	return symbols.get(code,OS.get_keycode_string(code).to_upper())
+
+func pad_name(button: int) -> String:
+	var names = {JOY_BUTTON_A:"A",JOY_BUTTON_B:"B",JOY_BUTTON_X:"X",JOY_BUTTON_Y:"Y",JOY_BUTTON_LEFT_SHOULDER:"LB",JOY_BUTTON_RIGHT_SHOULDER:"RB",JOY_BUTTON_LEFT_STICK:"L3",JOY_BUTTON_RIGHT_STICK:"R3",JOY_BUTTON_DPAD_UP:"十字↑",JOY_BUTTON_DPAD_DOWN:"十字↓",JOY_BUTTON_DPAD_LEFT:"十字←",JOY_BUTTON_DPAD_RIGHT:"十字→",PAD_LT:"LT",PAD_RT:"RT"}
+	return names.get(button,"パッド%d"%button)
+
+# The label for an action on whichever device the player touched last.
+func lbl(name: String) -> String:
+	var parts: Array[String] = []
+	if using_pad:
+		if name in ["left","right","down"]: return {"left":"←","right":"→","down":"↓"}[name]+"（十字／スティック）"
+		for button in pad_binds[name]: parts.append(pad_name(button))
+	else:
+		for code in key_binds[name]: parts.append(key_name(code))
+	return " / ".join(parts) if not parts.is_empty() else "未設定"
+
+func move_label() -> String:
+	return "十字／スティック" if using_pad else lbl("left")+"  "+lbl("right")
+
+func confirm_label() -> String:
+	return "A" if using_pad else "ENTER"
+
+func level_db(level: int, base: float) -> float:
+	return -80.0 if level<=0 else base+20.0*log(level/5.0)/log(10.0)
+
+func apply_volume():
+	if music_fade and music_fade.is_valid(): music_fade.kill()
+	music.volume_db = level_db(bgm_level,-18.0)
+	if bgm_level<=0: music.stop()
+	elif not muted and not music.playing and state in ["play","pause","dead","settings"] and not (state=="settings" and settings_from=="title"): music.play()
+
+func reset_bindings():
+	key_binds = DEFAULT_KEYS.duplicate(true)
+	pad_binds = DEFAULT_PAD.duplicate(true)
+
+func settings_testing() -> bool:
+	# Tests always use the default controls and never overwrite the player's file.
+	return OS.get_cmdline_user_args().size()>0 or Engine.get_main_loop().get_script()!=null
+
+func load_settings():
+	reset_bindings()
+	if settings_testing(): return
+	var cfg = ConfigFile.new()
+	if cfg.load(settings_path)!=OK: return
+	bgm_level = clampi(int(cfg.get_value("audio","bgm",5)),0,10)
+	sfx_level = clampi(int(cfg.get_value("audio","sfx",5)),0,10)
+	for name in ACTIONS:
+		var keys = cfg.get_value("keys",name,null)
+		if keys is Array: key_binds[name] = keys.map(func(v): return int(v))
+		var pads = cfg.get_value("pad",name,null)
+		if pads is Array and not name in ["left","right","down"]: pad_binds[name] = pads.map(func(v): return int(v))
+
+func save_settings():
+	if settings_testing(): return
+	var cfg = ConfigFile.new()
+	cfg.set_value("audio","bgm",bgm_level)
+	cfg.set_value("audio","sfx",sfx_level)
+	for name in ACTIONS:
+		cfg.set_value("keys",name,key_binds[name])
+		cfg.set_value("pad",name,pad_binds[name])
+	cfg.save(settings_path)
+
+func settings_rows() -> Array:
+	return ["bgm","sfx"]+ACTIONS+["reset","back"]
+
+func open_settings():
+	settings_from = state
+	settings_index = 0
+	rebinding = ""
+	settings_note = ""
+	state = "settings"
+
+func close_settings():
+	rebinding = ""
+	save_settings()
+	state = settings_from
+
+# A key or button may belong to only one action, so a new assignment takes it from the others.
+func bind_key(name: String, code: int):
+	for other in ACTIONS: key_binds[other] = key_binds[other].filter(func(c): return c!=code)
+	key_binds[name] = [code]
+	rebinding = ""
+	settings_note = ACTION_NAMES[name]+" を "+key_name(code)+" にしました"
+
+func bind_pad(name: String, button: int):
+	for other in ACTIONS: pad_binds[other] = pad_binds[other].filter(func(b): return b!=button)
+	pad_binds[name] = [button]
+	rebinding = ""
+	settings_note = ACTION_NAMES[name]+" を "+pad_name(button)+" にしました"
+
+func settings_activate(direction = 0):
+	var row = settings_rows()[settings_index]
+	match row:
+		"bgm":
+			bgm_level = clampi(bgm_level+(direction if direction!=0 else 1),0,10)
+			apply_volume()
+		"sfx":
+			sfx_level = clampi(sfx_level+(direction if direction!=0 else 1),0,10)
+			sound("shot")
+		"reset":
+			if direction==0:
+				reset_bindings()
+				bgm_level = 5
+				sfx_level = 5
+				apply_volume()
+				settings_note = "初期設定に戻しました"
+		"back":
+			if direction==0: close_settings()
+		_:
+			if direction==0:
+				rebinding = row
+				settings_note = ""
+
+func settings_move(step: int):
+	var count = settings_rows().size()
+	settings_index = (settings_index+step+count)%count
+
+func settings_input(event):
+	if rebinding!="":
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.physical_keycode==KEY_ESCAPE: rebinding = ""
+			elif event.physical_keycode in [KEY_F11,KEY_M]: settings_note = "F11 と M は変更できません"
+			else: bind_key(rebinding,event.physical_keycode)
+		elif event is InputEventJoypadButton and event.pressed:
+			if event.button_index in [JOY_BUTTON_START,JOY_BUTTON_BACK]: rebinding = ""
+			elif rebinding in ["left","right","down"]: settings_note = "パッドの方向は十字キーとスティックで固定です"
+			else: bind_pad(rebinding,event.button_index)
+		elif event is InputEventJoypadMotion and event.axis in [JOY_AXIS_TRIGGER_LEFT,JOY_AXIS_TRIGGER_RIGHT] and event.axis_value>0.6:
+			if not rebinding in ["left","right","down"]: bind_pad(rebinding,PAD_LT if event.axis==JOY_AXIS_TRIGGER_LEFT else PAD_RT)
+		elif event is InputEventMouseButton and event.pressed: rebinding = ""
+		return
+	if event is InputEventKey and event.pressed:
+		match event.physical_keycode:
+			KEY_UP, KEY_W: settings_move(-1)
+			KEY_DOWN, KEY_S: settings_move(1)
+			KEY_LEFT, KEY_A: settings_activate(-1)
+			KEY_RIGHT, KEY_D: settings_activate(1)
+			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+				if not event.echo: settings_activate()
+			KEY_ESCAPE, KEY_BACKSPACE, KEY_O:
+				if not event.echo: close_settings()
+	elif event is InputEventJoypadButton and event.pressed:
+		match event.button_index:
+			JOY_BUTTON_DPAD_UP: settings_move(-1)
+			JOY_BUTTON_DPAD_DOWN: settings_move(1)
+			JOY_BUTTON_DPAD_LEFT: settings_activate(-1)
+			JOY_BUTTON_DPAD_RIGHT: settings_activate(1)
+			JOY_BUTTON_A: settings_activate()
+			JOY_BUTTON_B, JOY_BUTTON_START, JOY_BUTTON_BACK: close_settings()
+	elif event is InputEventJoypadMotion and event.axis in [JOY_AXIS_LEFT_X,JOY_AXIS_LEFT_Y]:
+		var dir = 0 if absf(event.axis_value)<0.6 else int(signf(event.axis_value))
+		var held = stick_nav.get(event.axis,0)
+		if dir!=0 and dir!=held:
+			if event.axis==JOY_AXIS_LEFT_Y: settings_move(dir)
+			else: settings_activate(dir)
+		stick_nav[event.axis] = dir
+	elif event is InputEventMouseButton and event.pressed and event.button_index==MOUSE_BUTTON_LEFT:
+		var m = get_global_mouse_position()
+		for i in range(settings_rows().size()):
+			if settings_row_rect(i).has_point(m):
+				settings_index = i
+				var row = settings_rows()[i]
+				if row in ["bgm","sfx"]: settings_activate(-1 if m.x<settings_row_rect(i).get_center().x+200 else 1)
+				else: settings_activate()
+
+func settings_row_rect(i: int) -> Rect2:
+	return Rect2(250,150+i*44,780,38)
+
+func draw_settings():
+	draw_rect(Rect2(0,0,W,H),Color(0.015,0.025,0.06,0.9))
+	txt(Vector2(250,110),"設定",36,PINK)
+	txt(Vector2(380,108),("十字 / スティックで選択   A 決定   B 戻る" if using_pad else "↑↓ 選択   ←→ 音量   ENTER 決定   ESC 戻る"),16,Color("bdcbe2"))
+	txt(Vector2(640,140),"キーボード",14,Color("84d9e2"))
+	txt(Vector2(870,140),"コントローラー",14,Color("84d9e2"))
+	var rows = settings_rows()
+	for i in range(rows.size()):
+		var r = settings_row_rect(i)
+		var row = rows[i]
+		var selected = i==settings_index
+		draw_rect(r,Color(0.08,0.2,0.28,0.95) if selected else Color(0.03,0.07,0.13,0.8))
+		if selected: draw_rect(Rect2(r.position,Vector2(4,r.size.y)),Color("ffe28a"))
+		var y = r.position.y+26
+		match row:
+			"bgm", "sfx":
+				var level = bgm_level if row=="bgm" else sfx_level
+				txt(Vector2(272,y),"BGMの音量" if row=="bgm" else "効果音の音量",19)
+				for k in range(10):
+					draw_rect(Rect2(640+k*30,r.position.y+10,24,18),CYAN if k<level else Color("29344b"))
+				txt(Vector2(950,y),"切" if level==0 else str(level),18,Color("ffe28a"))
+			"reset": txt(Vector2(272,y),"初期設定に戻す",19)
+			"back": txt(Vector2(272,y),"戻る（自動で保存）",19)
+			_:
+				txt(Vector2(272,y),ACTION_NAMES[row],19)
+				if rebinding==row:
+					txt(Vector2(640,y),"新しいキーかボタンを押してください（ESC / START で取り消し）",16,Color("ffe28a") if int(clock*4)%2==0 else PINK)
+				else:
+					var keys: Array[String] = []
+					for code in key_binds[row]: keys.append(key_name(code))
+					var pads: Array[String] = []
+					for button in pad_binds[row]: pads.append(pad_name(button))
+					txt(Vector2(640,y)," / ".join(keys) if not keys.is_empty() else "未設定",18,Color("edf6ff"))
+					txt(Vector2(870,y),("十字 / スティック" if row in ["left","right","down"] else (" / ".join(pads) if not pads.is_empty() else "未設定")),18,Color("edf6ff"))
+	if settings_note!="": txt(Vector2(250,H-24),settings_note,17,Color("ffe28a"))
+	else: txt(Vector2(250,H-24),"項目を決定してから、割り当てたいキーやボタンを押します。同じキーは他の操作から外れます。",15,Color("bdcbe2"))
+
 func _unhandled_input(event):
+	if event is InputEventKey and event.pressed: using_pad = false
+	elif event is InputEventMouseButton and event.pressed: using_pad = false
+	elif event is InputEventJoypadButton and event.pressed: using_pad = true
+	elif event is InputEventJoypadMotion and absf(event.axis_value)>0.5: using_pad = true
+	if state == "settings":
+		settings_input(event)
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_O and state in ["title","pause"]:
+			open_settings()
+			return
 		if event.keycode == KEY_F11:
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		if event.keycode == KEY_M:
 			muted = not muted
 			if muted: music.stop()
-			elif state in ["play", "pause", "dead"]: music.play()
+			elif bgm_level>0 and state in ["play", "pause", "dead"]: music.play()
 		if event.keycode == KEY_ESCAPE:
 			if state == "play": state = "pause"
 			elif state == "pause": state = "play"
@@ -396,6 +643,9 @@ func _unhandled_input(event):
 		if event.keycode == KEY_E and state == "title": easy = not easy
 		if event.keycode == KEY_R and state == "pause": state = "title"; music.stop()
 	if event is InputEventJoypadButton and event.pressed:
+		if (state == "title" and event.button_index == JOY_BUTTON_BACK) or (state == "pause" and event.button_index == JOY_BUTTON_Y):
+			open_settings()
+			return
 		if state == "title" and event.button_index in [JOY_BUTTON_Y,JOY_BUTTON_DPAD_UP,JOY_BUTTON_DPAD_DOWN]: easy = not easy
 		if state == "pause" and event.button_index == JOY_BUTTON_BACK:
 			state = "title"
@@ -413,6 +663,7 @@ func _unhandled_input(event):
 		if state == "title":
 			if Rect2(100, 462, 360, 64).has_point(m): start_game()
 			elif Rect2(100, 542, 480, 44).has_point(m): easy = not easy
+			elif Rect2(100, 596, 480, 40).has_point(m): open_settings()
 		elif state == "dead": respawn()
 		elif state == "clear": start_game()
 		elif state == "pause": state = "play"
@@ -443,9 +694,11 @@ func update_game(dt: float):
 	if hitstop>0:
 		hitstop -= dt
 		# Keep presses made during the freeze so a jump or shot is not lost.
-		var held_jump = key(KEY_SPACE) or key(KEY_Z) or joy(JOY_BUTTON_A)
-		var held_fire = key(KEY_X) or key(KEY_J) or key(KEY_V) or joy(JOY_BUTTON_X) or joy(JOY_BUTTON_Y)
-		if held_jump and not prev_jump: jump_buffer = 0.12+maxf(0,hitstop)
+		var held_jump = act("jump")
+		var held_fire = act("fire")
+		if held_jump and not prev_jump:
+			jump_buffer = 0.12+maxf(0,hitstop)
+			drop_buffer = jump_buffer if act("down") else 0.0
 		if held_fire and not prev_fire: fire_buffer = 0.12+maxf(0,hitstop)
 		prev_jump = held_jump
 		return
@@ -470,51 +723,56 @@ func update_game(dt: float):
 	banner_time -= dt
 	boss_flash -= dt
 	shake = maxf(0, shake - dt * 25)
-	var axis = float(key(KEY_RIGHT) or key(KEY_D)) - float(key(KEY_LEFT) or key(KEY_A))
+	var axis = float(act("right")) - float(act("left"))
 	var ja = Input.get_joy_axis(0, JOY_AXIS_LEFT_X)
 	if absf(ja) > 0.25: axis = ja
 	if joy(JOY_BUTTON_DPAD_LEFT): axis = -1
 	if joy(JOY_BUTTON_DPAD_RIGHT): axis = 1
-	var jump = key(KEY_SPACE) or key(KEY_Z) or joy(JOY_BUTTON_A)
-	var dash = key(KEY_SHIFT) or key(KEY_C) or joy(JOY_BUTTON_B)
-	var saber_input = key(KEY_K) or joy(JOY_BUTTON_RIGHT_SHOULDER)
+	var jump = act("jump")
+	var dash = act("dash")
+	var down = act("down")
+	var saber_input = act("saber")
+	# The saber has no gauge; its cooldown is the only limit. A charge keeps building through the swing.
 	if saber_input and not prev_saber and saber_cooldown<=0 and dash_timer<=0 and hurt_pose<=0:
-		if energy>=SABER_COST:
-			energy -= SABER_COST
-			saber_time = 0.42
-			saber_air = not grounded
-			muzzle_time = 0
-			saber_cooldown = 0.75
-			saber_facing = facing
-			saber_hits.clear()
-			saber_boss_hit = false
-			charge = 0
-			sound("dash")
-		else: energy_flash = 0.5
+		saber_time = 0.42
+		saber_air = not grounded
+		muzzle_time = 0
+		saber_cooldown = SABER_COOLDOWN
+		saber_facing = facing
+		saber_hits.clear()
+		saber_boss_hit = false
+		sound("dash")
 	prev_saber = saber_input
-	if saber_time<=0: energy = minf(ENERGY_MAX,energy+(9.0 if easy else 6.0)*dt)
-	energy_flash = maxf(0,energy_flash-dt)
 	# Each press fires one shot; holding the same button builds a two-stage charge.
-	var fire = (key(KEY_X) or key(KEY_J) or key(KEY_V) or joy(JOY_BUTTON_X) or joy(JOY_BUTTON_Y)) and saber_time<=0
+	var fire = act("fire")
 	var shot_request = -1
-	if fire and not prev_fire: fire_buffer = 0.12
+	if fire and not prev_fire and saber_time<=0: fire_buffer = 0.12
 	fire_buffer -= dt
-	if fire_buffer>0 and shot_timer<=0:
+	if fire_buffer>0 and shot_timer<=0 and saber_time<=0:
 		shot_request = 0
 		fire_buffer = 0
 	if fire: charge = minf(FULL_CHARGE,charge+dt)
 	elif prev_fire:
-		if charge>=0.8: shot_request = 2 if charge>=FULL_CHARGE else 1
+		if charge>=0.8: charge_release = 2 if charge>=FULL_CHARGE else 1
 		charge = 0
+	# A charge let go mid-swing fires the moment the swing ends.
+	if charge_release>0 and saber_time<=0 and hurt_pose<=0:
+		shot_request = charge_release
+		charge_release = -1
 	prev_fire = fire
 	var charging = fire and charge>=0.2
-	if jump and not prev_jump: jump_buffer = 0.12
-	if jump and not prev_jump and grounded and player.y<600 and (key(KEY_DOWN) or key(KEY_S) or joy(JOY_BUTTON_DPAD_DOWN)):
+	if jump and not prev_jump:
+		jump_buffer = 0.12
+		drop_buffer = 0.12 if down else 0.0
+	drop_buffer -= dt
+	# Down + jump on a thin platform drops through it instead of jumping.
+	if drop_buffer>0 and grounded and player.y<600:
 		drop_timer = 0.25
 		grounded = false
 		player.y += 5
 		velocity.y = 80
 		jump_buffer = 0
+		drop_buffer = 0
 		coyote = 0
 	jump_buffer -= dt
 	if grounded: coyote = 0.12
@@ -525,6 +783,7 @@ func update_game(dt: float):
 		grounded = false
 		coyote = 0
 		jump_buffer = 0
+		drop_buffer = 0
 		sound("jump")
 	if not jump and prev_jump and velocity.y < -220: velocity.y = -220
 	if axis != 0 and saber_time<=0: facing = 1 if axis > 0 else -1
@@ -548,7 +807,7 @@ func update_game(dt: float):
 		var low_gravity = field_area()==5
 		var low_gravity_air = low_gravity and not grounded
 		velocity.y = minf(560.0 if low_gravity else 900.0, velocity.y + (900.0 if low_gravity else 1600.0) * dt)
-		if low_gravity_air and (key(KEY_DOWN) or key(KEY_S) or joy(JOY_BUTTON_DPAD_DOWN)):
+		if low_gravity_air and down:
 			velocity.y=move_toward(velocity.y,800.0,2100.0*dt)
 	var old_y = player.y
 	var old_x = player.x
@@ -647,7 +906,7 @@ func update_game(dt: float):
 		p.v.y += 200 * dt
 		p.life -= dt
 		if p.life <= 0: particles.remove_at(i)
-	camera_x = clampf(lerpf(camera_x,player.x-390,1-exp(-dt*8)),0,END_X-W)
+	camera_x = clampf(lerpf(camera_x,camera_goal(),1-exp(-dt*8)),0,END_X-W)
 	update_music_state()
 
 func shoot(big: bool, full = false):
@@ -931,7 +1190,8 @@ func update_enemies(dt: float):
 		if not door_between(player.x,e.p.x) and (player+Vector2(0,-40)).distance_to(e.p+Vector2(0,-10))<48: hurt(1 if easy else 2)
 
 func update_boss(dt: float):
-	if player.x<BOSS_X+100 or boss_hp<=0: return
+	# Once the fight starts the boss keeps acting even when Lumina backs into the left wall.
+	if boss_hp<=0 or (not boss_active and player.x<BOSS_X+100): return
 	if not boss_active:
 		boss_active = true
 		boss_intro = 2.2
@@ -1022,16 +1282,16 @@ func update_bullets(dt: float):
 					continue
 			if saber_active() and not b.get("solid",false) and saber_rect().grow(b.r).has_point(b.p):
 				parries += 1
-				# The first frames of the swing reflect the shot and refund energy.
+				# The first frames of the swing reflect the shot back as a homing bolt.
 				if saber_time>JUST_WINDOW:
 					b.enemy = false
 					b.v = Vector2(saber_facing*900,0)
 					b.damage = 4
 					b.reflected=true
-					b.life = 1.4
+					b.seek = true
+					b.life = 2.0
 					b.hits = []
 					b.erase("home")
-					energy = minf(ENERGY_MAX,energy+8)
 					score+=100
 					just_reflections+=1
 					parry_marks.append({"p":b.p,"age":0.0})
@@ -1044,18 +1304,19 @@ func update_bullets(dt: float):
 					bullets.remove_at(i)
 				continue
 			if Rect2(player-Vector2(21,80),Vector2(42,80)).grow(b.r).has_point(b.p):
-				# Slipping through a shot during the dash refills energy.
+				# Slipping through a shot during the dash readies the saber at once.
 				if dash_timer>0:
 					if not b.get("grazed",false):
 						b.grazed = true
-						energy = minf(ENERGY_MAX,energy+6)
+						saber_cooldown = 0
 						score+=60
 						just_dodges+=1
-						popup(player-Vector2(0,95),"JUST DODGE  +6",CYAN)
+						popup(player-Vector2(0,95),"JUST DODGE  SABER READY",CYAN)
 					continue
 				hurt(b.damage)
 				remove = true
 		else:
+			if b.get("seek",false): steer_reflection(b,dt)
 			var pierce = b.get("pierce",false)
 			for ei in range(enemies.size()):
 				var e = enemies[ei]
@@ -1127,7 +1388,6 @@ func respawn():
 	prev_fire = false
 	alert_cool = 0
 	fire_buffer = 0
-	energy = ENERGY_MAX
 	popups.clear()
 	walk_phase = 0
 	jumps = 0
@@ -1162,8 +1422,9 @@ func sprite(index: int, feet: Vector2, height: float, flip = false, tint = Color
 
 func _draw():
 	draw_background()
-	if state == "title":
+	if state == "title" or (state == "settings" and settings_from == "title"):
 		draw_title()
+		if state == "settings": draw_settings()
 		return
 	var offset = Vector2(-camera_x + sin(clock*81)*shake,0)
 	for p in platforms:
@@ -1191,11 +1452,12 @@ func _draw():
 			draw_line(Vector2(x+130,610),Vector2(x+130,390),CYAN if int(room/4)<=checkpoint else Color("466477"),3)
 			txt(Vector2(x+150,428),"RELAY %02d"%(room/4+1),18,CYAN)
 		if room < 4:
-			var tips = ["← → / A D  移動     Z / Space  ジャンプ（2回）", "X / J  押すたびに射撃     長押しでため撃ち（金色で貫通）", "Shift / C  ダッシュ・無敵     弾をくぐり抜けるとEN回復", "K  セーバー：ENを使って弾を消す     振り始めで当てると反射"]
+			var tips = [move_label()+"  移動     "+lbl("jump")+"  ジャンプ（2回）", lbl("fire")+"  押すたびに射撃     長押しでため撃ち（金色で貫通）", lbl("dash")+"  ダッシュ・無敵     弾をくぐり抜けるとセーバーが即再使用", lbl("saber")+"  セーバー：弾を消す     振り始めで当てると敵を追う反射弾"]
 			txt(Vector2(x+100,265),tips[room],22,CYAN)
+			if room==1: txt(Vector2(x+100,235),lbl("down").get_slice("（",0)+" ＋ "+lbl("jump").get_slice(" / ",0)+"  足場から飛び降りる",18,Color("bdcbe2"))
 			if room==3: txt(Vector2(x+100,235),"オレンジのトゲ弾はセーバーで消せない — 跳ぶかダッシュで避けよう",18,Color("ff9a3c"))
 		if room in [4,8,12,16,20]:
-			var tips = {4:"配電回廊：ときどき床に電流が走る！ 予告が出たら足場へ",8:"空中搬送路：突風が吹く — 風下の穴に注意",12:"冷却プラント：氷の床はほとんど止まれない！",16:"防衛区画：サーチライトに見つかると一斉射撃",20:"低重力：天井の電流と空中の慣性に注意 — ↓ / Sで急降下"}
+			var tips = {4:"配電回廊：ときどき床に電流が走る！ 予告が出たら足場へ",8:"空中搬送路：突風が吹く — 風下の穴に注意",12:"冷却プラント：氷の床はほとんど止まれない！",16:"防衛区画：サーチライトに見つかると一斉射撃",20:"低重力：天井の電流と空中の慣性に注意 — "+lbl("down").get_slice("（",0)+"で急降下"}
 			txt(Vector2(x+100,235),tips[room],20,CYAN)
 
 	for core in cores:
@@ -1301,15 +1563,16 @@ func _draw():
 		if absf(gate.x-player.x)<1500: draw_door(gate,offset)
 	if state=="defeat": draw_rect(Rect2(0,0,W,H),Color(1,0.9,0.95,maxf(0,1-absf(ending_time-2.0)*5)))
 	draw_hud()
-	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "K / RB：セーバー（EN消費・出だしで反射）   R / Back：タイトルへ   M：音")
-	if state == "dead": panel("もう一度、飛び出そう。", "Enter / クリックでチェックポイントから再開", "残機制限なし。ダッシュ中は短時間、攻撃をすり抜けます。")
+	if state == "settings": draw_settings()
+	if state == "pause": panel("一時停止", ("START" if using_pad else "ENTER / ESC")+" / クリックで再開", ("Y：設定（キー・音量）   BACK：タイトルへ" if using_pad else "O：設定（キー・音量）   R：タイトルへ   M：音を切る"))
+	if state == "dead": panel("もう一度、飛び出そう。", confirm_label()+" / クリックでチェックポイントから再開", "残機制限なし。ダッシュ中は短時間、攻撃をすり抜けます。")
 	if state == "clear":
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
 		art_sprite("poses",3,Vector2(1090,535),220)
 		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else ""),14,Color("ffe28a"))
 		txt(Vector2(875,395),clear_rank(),78,Color("ffe28a"))
 		txt(Vector2(300,501),"SCORE %07d   最大コンボ %d   被ダメージ %d"%[score,max_combo,damage_taken],20,Color("ffe28a"))
-		txt(Vector2(440,525),"Enter / A / クリックでもう一度",24,CYAN)
+		txt(Vector2(440,525),confirm_label()+" / クリックでもう一度",24,CYAN)
 
 func draw_field(offset: Vector2):
 	var first_room = int(camera_x/ROOM)
@@ -1346,10 +1609,10 @@ func draw_field(offset: Vector2):
 			var phase=ceiling_phase()
 			if phase=="on": env_strip("electricity",int(clock*18)%4,Rect2(0,130,W,20),110)
 			elif phase=="warn": draw_rect(Rect2(0,134,W,10),Color(1,0.75,0.3,0.4+sin(clock*18)*0.3))
-			txt(Vector2(26,195),"空中は慣性が強い / ↓・Sで急降下",17,CYAN)
+			txt(Vector2(26,195),"空中は慣性が強い / "+lbl("down").get_slice("（",0)+"で急降下",17,CYAN)
 			if phase!="off":
 				draw_rect(Rect2(340,678,610,32),Color(0.02,0.04,0.1,0.88))
-				txt(Vector2(365,701),"天井の電流に注意！ 上がりすぎる前に↓で急降下",18,PINK if phase=="on" else Color("ffe28a"))
+				txt(Vector2(365,701),"天井の電流に注意！ 上がりすぎる前に"+lbl("down").get_slice("（",0)+"で急降下",18,PINK if phase=="on" else Color("ffe28a"))
 			for i in range(32):
 				var x = fposmod(i*97.3-camera_x*0.3,W)
 				var y = fposmod(600-clock*35-i*41,480)+120
@@ -1435,15 +1698,18 @@ func draw_title():
 	draw_polyline(PackedVector2Array([points[0],points[1],points[2],points[3],points[4],points[5],points[0]]),Color(1,1,1,0.6),1.5)
 	draw_colored_polygon(PackedVector2Array([Vector2(122,483),Vector2(122,504),Vector2(138,494)]),Color("102c36"))
 	title_txt(Vector2(156,503),"出撃する",27,Color("102c36"))
-	txt(Vector2(333,500),"ENTER / A",13,Color("102c36"))
+	txt(Vector2(333,500),confirm_label(),13,Color("102c36"))
 	draw_rect(Rect2(100,542,480,44),Color(0.03,0.07,0.13,0.86))
 	draw_rect(Rect2(100,542,480,44),Color(0.4,0.8,0.85,0.38),false,1)
 	draw_rect(Rect2(100,542,3,44),Color("ffe28a"))
-	txt(Vector2(117,570),"E / Y  難易度："+("アシスト" if easy else "ノーマル"),17,Color("edf6ff"))
+	txt(Vector2(117,570),("Y / 十字↑↓" if using_pad else "E")+"  難易度："+("アシスト" if easy else "ノーマル"),17,Color("edf6ff"))
 	txt(Vector2(390,570),"体力増 / 弾速低下" if easy else "基本ルール",13,Color("b2c7da"))
-	txt(Vector2(100,624),"移動 ←→ / A D    ジャンプ Z / SPACE",15,Color("bdcbe2"))
-	txt(Vector2(100,649),"射撃 X / J    セーバー K / RB    ダッシュ SHIFT",15,Color("bdcbe2"))
-	txt(Vector2(100,680),"1 STAGE / 6 SECTORS + BOSS   •   GAMEPAD",12,Color("84d9e2"))
+	var settings_hover=Rect2(100,596,480,40).has_point(get_global_mouse_position())
+	draw_rect(Rect2(100,596,480,40),Color(0.06,0.14,0.22,0.92) if settings_hover else Color(0.03,0.07,0.13,0.86))
+	draw_rect(Rect2(100,596,480,40),Color(0.4,0.8,0.85,0.38),false,1)
+	txt(Vector2(117,622),("BACK" if using_pad else "O")+"  設定：キー設定・音量",17,Color("edf6ff"))
+	txt(Vector2(100,662),"移動 "+move_label()+"   ジャンプ "+lbl("jump")+"   射撃 "+lbl("fire")+"   セーバー "+lbl("saber")+"   ダッシュ "+lbl("dash"),14,Color("bdcbe2"))
+	txt(Vector2(100,690),"1 STAGE / 6 SECTORS + BOSS   •   "+("コントローラー操作中" if using_pad else "キーボード操作中（パッドのボタンを押すと表示が切り替わります）"),12,Color("84d9e2"))
 	txt(Vector2(1112,682),"F11 全画面",13,Color("b9d4df"))
 
 func title_txt(at: Vector2, value: String, size: int, color: Color):
@@ -1464,16 +1730,10 @@ func draw_hud():
 	txt(Vector2(340,50),sector_names[mini(6,int(player.x/(ROOM*4)))],22)
 	txt(Vector2(780,45),"%07d pt"%score,21,Color("ffe28a"))
 	if combo>1: txt(Vector2(780,64),"連続撃破 %d  ×%.1f"%[combo,combo_multiplier()],13,Color("ffe28a"))
-	# Saber energy: one notch per swing.
-	var en_color = PINK if energy_flash>0 and int(clock*16)%2==0 else (Color("ffe28a") if energy>=SABER_COST else Color("8a7a52"))
-	draw_rect(Rect2(118,84,190,7),Color("29344b"))
-	draw_rect(Rect2(118,84,190*energy/ENERGY_MAX,7),en_color)
-	for k in range(1,3): draw_line(Vector2(118+190*SABER_COST*k/ENERGY_MAX,84),Vector2(118+190*SABER_COST*k/ENERGY_MAX,91),Color("0b1020"),2)
-	txt(Vector2(312,92),"EN",11,en_color)
-	var charge_text = "MAX" if charge>=FULL_CHARGE else ("READY" if charge>=0.8 else "X 長押し")
-	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + charge_text + "     SABER  " + ("OK" if energy>=SABER_COST else "EN不足") + "     CORE  %d / 6"%core_count,14,CYAN)
+	var charge_text = "MAX" if charge>=FULL_CHARGE else ("READY" if charge>=0.8 else lbl("fire").get_slice(" / ",0)+" 長押し")
+	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + charge_text + "     SABER  " + ("READY" if saber_cooldown<=0 else "…") + "     CORE  %d / 6"%core_count,14,CYAN)
 	txt(Vector2(1045,50),time_text(),25)
-	txt(Vector2(1045,80),"撃破 %02d  /  M 音"%kills,15,Color("bdcbe2"))
+	txt(Vector2(1045,80),"撃破 %02d"%kills+("" if using_pad else "  /  M 音"),15,Color("bdcbe2"))
 	draw_rect(Rect2(24,104,1232*clampf(player.x/END_X,0,1),3),PINK)
 	if banner_time>0:
 		draw_rect(Rect2(290,130,730,48),Color(0.02,0.06,0.13,0.85))
@@ -1623,11 +1883,22 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "title-assist", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
+	for scene in ["title", "title-assist", "title-pad", "settings", "settings-pad", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
 		if scene in ["title","title-assist"]:
 			state="title"
 			easy=scene=="title-assist"
+			using_pad=false
+		if scene in ["title-pad","settings","settings-pad"]:
+			state="title"
+			easy=false
+			using_pad=scene!="settings"
+			if scene!="title-pad":
+				open_settings()
+				settings_index=5
+				if scene=="settings-pad": rebinding="fire"
 		if scene == "stage":
+			using_pad=false
+			rebinding=""
 			easy=false
 			start_game()
 			player = Vector2(1500,610)
@@ -1708,7 +1979,6 @@ func capture_qa():
 			enemy_shot(player+Vector2(360,-60),Vector2.LEFT,10)
 			enemy_shot(player+Vector2(460,-200),Vector2.DOWN,13,"bomb")
 			shoot(true,true)
-			energy = 30
 			charge = FULL_CHARGE
 			popup(player-Vector2(0,110),"JUST!",Color("ffe28a"))
 		if scene == "clear":
@@ -1874,18 +2144,17 @@ func motion_test():
 	if not bullets.filter(func(b): return b.enemy).is_empty(): errors.append("air saber parry")
 	grounded=true
 	if hero_visual().name!="air_saber": errors.append("air swing landing continuity")
-	# Saber economy, solid shots, late parry, just dodge, tap fire and full charge.
+	# Saber cooldown, solid shots, late parry, just dodge, tap fire and full charge.
 	saber_time=0
-	saber_cooldown=0
+	saber_cooldown=0.5
 	prev_saber=false
 	hurt_pose=0
-	energy=SABER_COST-1
 	test_key(KEY_K,true)
 	update_game(1.0/60)
 	test_key(KEY_K,false)
 	update_game(1.0/60)
-	if saber_time>0: errors.append("saber needs energy")
-	energy=ENERGY_MAX
+	if saber_time>0: errors.append("saber cooldown blocks")
+	saber_cooldown=0
 	saber_time=0.21
 	saber_facing=1
 	facing=1
@@ -1896,15 +2165,14 @@ func motion_test():
 	bullets.clear()
 	saber_time=0.15
 	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
-	var before=energy
 	update_bullets(0)
-	if not bullets.is_empty() or energy!=before: errors.append("late parry cancels only")
+	if not bullets.is_empty(): errors.append("late parry cancels only")
 	saber_time=0
 	dash_timer=0.1
-	energy=50
+	saber_cooldown=0.5
 	enemy_shot(player+Vector2(0,-40),Vector2.ZERO)
 	update_bullets(0)
-	if energy!=56 or hp<=0: errors.append("just dodge energy")
+	if saber_cooldown>0 or hp<=0: errors.append("just dodge readies saber")
 	dash_timer=0
 	bullets.clear()
 	start_game()
@@ -1923,6 +2191,65 @@ func motion_test():
 	test_key(KEY_X,false)
 	update_game(1.0/60)
 	if bullets.is_empty() or not bullets[-1].get("pierce",false): errors.append("full charge pierce")
+	# A charge survives a saber swing and fires as soon as the swing ends.
+	bullets.clear()
+	saber_cooldown=0
+	prev_saber=false
+	test_key(KEY_X,true)
+	for f in range(55): update_game(1.0/60)
+	test_key(KEY_K,true)
+	update_game(1.0/60)
+	test_key(KEY_K,false)
+	for f in range(8): update_game(1.0/60)
+	if saber_time<=0 or charge<0.8: errors.append("charge during saber")
+	test_key(KEY_X,false)
+	update_game(1.0/60)
+	if not bullets.filter(func(b): return not b.enemy).is_empty(): errors.append("no shot mid-swing")
+	for f in range(30): update_game(1.0/60)
+	if bullets.filter(func(b): return not b.enemy and b.damage>=7).is_empty(): errors.append("charge fires after swing")
+	# A just reflection curves toward an enemy that is not straight ahead.
+	bullets.clear()
+	enemies.clear()
+	spawn_enemy(player+Vector2(320,-230),1,0)
+	saber_time=0.26
+	saber_facing=1
+	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
+	update_bullets(0)
+	saber_time=0
+	for f in range(10): update_bullets(1.0/60)
+	if bullets.is_empty() or bullets[0].v.y>-100: errors.append("reflection homes")
+	bullets.clear()
+	enemies.clear()
+	# Rebinding moves a key to the new action and takes it from the old one.
+	bind_key("jump",KEY_X)
+	if KEY_X in key_binds.fire or key_binds.jump!=[KEY_X]: errors.append("rebind key")
+	reset_bindings()
+	# The final boss keeps attacking while Lumina hugs the arena's left wall.
+	start_game()
+	invincible=999
+	player=Vector2(BOSS_X+200,610)
+	update_game(1.0/60)
+	player=Vector2(BOSS_X+35,610)
+	for f in range(360):
+		invincible=999
+		player.x=BOSS_X+35
+		update_game(1.0/60)
+	if boss_cycle<1: errors.append("boss acts at left wall")
+	if absf(camera_x-(END_X-W))>2: errors.append("boss arena camera")
+	# The sentinel keeps fighting even when Lumina stays at the room's left edge.
+	start_game()
+	invincible=999
+	var mini_base=11*ROOM
+	spawn_enemy(Vector2(mini_base+990,600),6,11)
+	var sentinel=enemies[-1]
+	player=Vector2(mini_base+30,610)
+	camera_x=mini_base-390
+	for f in range(360):
+		invincible=999
+		player.x=mini_base+30
+		update_game(1.0/60)
+	if sentinel.cycle<1 and sentinel.mode=="intro": errors.append("sentinel acts at left edge")
+	if sentinel.p.x>camera_x+W-60: errors.append("sentinel stays on screen")
 	print("MOTION TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
 	get_tree().quit(0 if errors.is_empty() else 1)
 
@@ -2093,7 +2420,7 @@ func walk_lean() -> float:
 	return deg_to_rad(20)*clampf(absf(velocity.x)/180.0,0,1)
 
 func walk_aiming() -> bool:
-	return aim_time>0 or charge>0 or key(KEY_X) or key(KEY_J) or joy(JOY_BUTTON_X) or key(KEY_V) or joy(JOY_BUTTON_Y)
+	return aim_time>0 or charge>0 or act("fire")
 
 func walk_arm(phase: float, gun: bool) -> Dictionary:
 	var body = motion_meta.rig.body
@@ -2253,6 +2580,28 @@ func register_enemy_defeat(enemy: Dictionary):
 		banner_time=3
 		sound("win")
 
+# Reflected shots curve toward the nearest visible enemy (or the boss) so a good parry pays off.
+func reflection_target(from: Vector2) -> Vector2:
+	var best = Vector2.INF
+	var best_d = INF
+	for e in enemies:
+		if e.hp<=0 or e.p.x<camera_x or e.p.x>camera_x+W or door_between(from.x,e.p.x): continue
+		var aim = enemy_rect(e).get_center()
+		var d = from.distance_to(aim)
+		if d<best_d:
+			best_d = d
+			best = aim
+	if boss_active and boss_hp>0 and boss_intro<=0:
+		var core = boss_pos-Vector2(0,70)
+		if from.distance_to(core)<best_d: best = core
+	return best
+
+func steer_reflection(b: Dictionary, dt: float):
+	var target = reflection_target(b.p)
+	if target==Vector2.INF: return
+	var speed = b.v.length()
+	b.v = b.v.lerp((target-b.p).normalized()*speed,minf(1,dt*9)).normalized()*speed
+
 func reflection_reward(at: Vector2):
 	score+=150
 	parry_marks.append({"p":at,"age":0.0})
@@ -2280,12 +2629,24 @@ func reward_clear():
 			records.set_value("records","rank",clear_rank())
 			records.save(record_path)
 
+# Boss fights hold the camera on the whole arena so the fighter never leaves the screen.
+func camera_goal() -> float:
+	if boss_active and boss_hp>0: return END_X-W
+	var room = int(player.x/ROOM)
+	for enemy in enemies:
+		if enemy.kind==6 and enemy.hp>0 and enemy.room==room: return room*ROOM-80
+	return player.x-390
+
 func update_miniboss(enemy: Dictionary, dt: float):
 	if door_between(enemy.p.x,player.x): return
-	if enemy.p.x<camera_x+30 or enemy.p.x>camera_x+W-30: return
-	enemy.mt-=dt
 	enemy.fire_pose=maxf(0,enemy.get("fire_pose",0.0)-dt)
 	var base=enemy.room*ROOM
+	# While the camera is still sliding over, walk back into view instead of freezing.
+	if enemy.p.x<camera_x+60 or enemy.p.x>camera_x+W-60:
+		enemy.p.x=clampf(move_toward(enemy.p.x,clampf(enemy.p.x,camera_x+120,camera_x+W-120),220*dt),base+310,base+990)
+		if enemy.mode=="rush": enemy.mode="recover"; enemy.mt=0.5
+		return
+	enemy.mt-=dt
 	match enemy.mode:
 		"intro":
 			if enemy.mt<=0: enemy.mode="tell"; enemy.mt=0.8
@@ -2354,9 +2715,9 @@ func set_bgm(track: String, restart=false):
 	music.stop()
 	music.stream=bgm[track]
 	music.volume_db=-30
-	if not muted: music.play()
+	if not muted and bgm_level>0: music.play()
 	music_fade=create_tween()
-	music_fade.tween_property(music,"volume_db",-18.0,0.4)
+	music_fade.tween_property(music,"volume_db",level_db(bgm_level,-18.0),0.4)
 
 func update_music_state():
 	if state!="play": return

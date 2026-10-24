@@ -49,11 +49,10 @@ func run():
 	fresh()
 	game.saber_time=0.26
 	game.saber_facing=1
-	game.energy=10
 	game.enemy_shot(game.player+Vector2(70,-60),Vector2.ZERO)
 	game.update_bullets(0)
 	check(game.bullets.size()==1 and game.bullets[0].get("reflected",false),"actual reflection tags projectile")
-	check(game.score==100 and game.energy==18 and game.parry_marks.size()==1,"just reflection reward and effect")
+	check(game.score==100 and game.parry_marks.size()==1,"just reflection reward and effect")
 	game.boss_active=true
 	game.boss_intro=0
 	game.boss_pos=Vector2(700,540)
