@@ -993,4 +993,3 @@ func update_fx(dt: float):
 	for i in range(fx.size()-1,-1,-1):
 		fx[i].age += dt
 		if fx[i].age>=0.5: fx.remove_at(i)
-

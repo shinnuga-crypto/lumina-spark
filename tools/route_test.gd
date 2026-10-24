@@ -130,8 +130,3 @@ func run():
 	print("ROUTE TEST: ","PASS" if failures.is_empty() else "FAIL"," ",failures," ticks=",ticks," seconds=",ticks/60," kills=",game.kills," cores=",game.core_count)
 	await process_frame
 	quit(0 if failures.is_empty() else 1)
-
-
-
-
-
