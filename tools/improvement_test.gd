@@ -59,10 +59,10 @@ func run():
 	game.boss_hp=100
 	game.bullets[0].p=game.boss_pos-Vector2(0,60)
 	game.update_bullets(0)
-	check(game.boss_hp==92 and game.score==250,"reflected final boss hit deals eight and awards bonus")
+	check(game.boss_hp==94 and game.score==250,"reflected final boss hit deals six and awards bonus")
 	game.bullets.append({"p":game.boss_pos-Vector2(0,60),"v":Vector2.ZERO,"enemy":false,"damage":4,"r":5.0,"life":1.0})
 	game.update_bullets(0)
-	check(game.boss_hp==88,"ordinary four-damage shot is not doubled")
+	check(game.boss_hp==90,"ordinary four-damage shot is not doubled")
 
 	fresh()
 	var base=11*game.ROOM

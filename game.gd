@@ -110,10 +110,18 @@ var prev_dash = false
 var prev_fire = false
 var fire_buffer = 0.0
 var popups: Array[Dictionary] = []
-const SABER_COOLDOWN = 0.75
+const SABER_COOLDOWN = 0.85
+# Danmaku mode: triple enemy fire, a quick saber that can be swung while dashing.
+const DANMAKU_SABER_COOLDOWN = 0.22
+const DASH_COOLDOWN = 0.45
 const FULL_CHARGE = 1.6
 # The saber is active while saber_time is 0.07..0.28; only its first 0.05 s reflects.
-const JUST_WINDOW = 0.23
+const JUST_WINDOW = 0.245
+const DANMAKU_JUST_WINDOW = 0.2
+var danmaku = false
+var dodge_charge = 0.0
+var slow_time = 0.0
+var slow_cool = 0.0
 const DOOR_KINDS = ["sync","switch","kill","break","sync","switch"]
 const DOOR_FLOOR = 610.0
 const DOOR_TOP = 438.0
@@ -326,6 +334,9 @@ func start_game():
 	if fixed_seed: rng.seed = run_seed
 	else: rng.randomize()
 	hp = 20 if easy else 12
+	dodge_charge = 0
+	slow_time = 0
+	slow_cool = 0
 	max_hp = hp
 	player = Vector2(130, 500)
 	velocity = Vector2.ZERO
@@ -640,13 +651,13 @@ func _unhandled_input(event):
 			if state == "title" or state == "clear": start_game()
 			elif state == "dead": respawn()
 			elif state == "pause": state = "play"
-		if event.keycode == KEY_E and state == "title": easy = not easy
+		if event.keycode == KEY_E and state == "title": cycle_difficulty(1)
 		if event.keycode == KEY_R and state == "pause": state = "title"; music.stop()
 	if event is InputEventJoypadButton and event.pressed:
 		if (state == "title" and event.button_index == JOY_BUTTON_BACK) or (state == "pause" and event.button_index == JOY_BUTTON_Y):
 			open_settings()
 			return
-		if state == "title" and event.button_index in [JOY_BUTTON_Y,JOY_BUTTON_DPAD_UP,JOY_BUTTON_DPAD_DOWN]: easy = not easy
+		if state == "title" and event.button_index in [JOY_BUTTON_Y,JOY_BUTTON_DPAD_UP,JOY_BUTTON_DPAD_DOWN]: cycle_difficulty(-1 if event.button_index==JOY_BUTTON_DPAD_UP else 1)
 		if state == "pause" and event.button_index == JOY_BUTTON_BACK:
 			state = "title"
 			music.stop()
@@ -662,7 +673,7 @@ func _unhandled_input(event):
 		var m = get_global_mouse_position()
 		if state == "title":
 			if Rect2(100, 462, 360, 64).has_point(m): start_game()
-			elif Rect2(100, 542, 480, 44).has_point(m): easy = not easy
+			elif Rect2(100, 542, 480, 44).has_point(m): cycle_difficulty(1)
 			elif Rect2(100, 596, 480, 40).has_point(m): open_settings()
 		elif state == "dead": respawn()
 		elif state == "clear": start_game()
@@ -679,6 +690,12 @@ func _physics_process(dt):
 	if state in ["play","defeat"]: update_game(dt)
 
 func update_game(dt: float):
+	# A just dodge briefly slows the whole game to half speed.
+	if state=="play" and slow_time>0:
+		slow_time -= dt
+		dt *= 0.5
+	slow_cool = maxf(0,slow_cool-dt)
+	dodge_charge = maxf(0,dodge_charge-dt)
 	update_fx(dt)
 	if state == "defeat":
 		ending_time += dt
@@ -733,11 +750,12 @@ func update_game(dt: float):
 	var down = act("down")
 	var saber_input = act("saber")
 	# The saber has no gauge; its cooldown is the only limit. A charge keeps building through the swing.
-	if saber_input and not prev_saber and saber_cooldown<=0 and dash_timer<=0 and hurt_pose<=0:
-		saber_time = 0.42
+	if saber_input and not prev_saber and saber_cooldown<=0 and (dash_timer<=0 or danmaku) and hurt_pose<=0:
+		# Danmaku swings come out almost at once so shots can be returned one after another.
+		saber_time = 0.34 if danmaku else 0.42
 		saber_air = not grounded
 		muzzle_time = 0
-		saber_cooldown = SABER_COOLDOWN
+		saber_cooldown = DANMAKU_SABER_COOLDOWN if danmaku else SABER_COOLDOWN
 		saber_facing = facing
 		saber_hits.clear()
 		saber_boss_hit = false
@@ -789,8 +807,8 @@ func update_game(dt: float):
 	if axis != 0 and saber_time<=0: facing = 1 if axis > 0 else -1
 	if dash and not prev_dash and dash_cooldown <= 0 and saber_time<=0:
 		dash_timer = 0.17
-		dash_cooldown = 0.7
-		invincible = maxf(invincible, 0.19)
+		dash_cooldown = DASH_COOLDOWN
+		invincible = maxf(invincible, 0.24)
 		sound("dash")
 	prev_jump = jump
 	prev_dash = dash
@@ -892,6 +910,10 @@ func update_game(dt: float):
 		walk_phase = fmod(walk_phase+absf(velocity.x)*dt/13.0,8.0)
 	else: walk_phase = 0
 	if saber_time>0 and not grounded: saber_air = true
+	# A just dodge loads the next shot as a full charge.
+	if shot_request==0 and dodge_charge>0:
+		shot_request = 2
+		dodge_charge = 0
 	if shot_request>=0: shoot(shot_request>=1,shot_request==2)
 	for i in range(popups.size()-1,-1,-1):
 		popups[i].age += dt
@@ -928,7 +950,15 @@ func shoot(big: bool, full = false):
 
 # kind: "solid" cannot be cut by the saber, "home" steers toward Lumina, "bomb" falls and splits on the floor.
 func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
-	var b = {"p":pos,"v":vel,"enemy":true,"damage":1 if easy else 2,"r":radius,"life":5.0,"solid":kind in ["solid","bomb"]}
+	if danmaku and vel.length()>1:
+		# Three times the fire: floor waves come at three speeds, everything else fans out.
+		var floor_wave = absf(vel.y)<1 and pos.y>=585
+		for k in [-1,0,1]:
+			add_enemy_bullet(pos,vel*(1.0+k*0.28) if floor_wave else vel.rotated(k*0.2),radius,kind)
+	else: add_enemy_bullet(pos,vel,radius,kind)
+
+func add_enemy_bullet(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
+	var b = {"p":pos,"v":vel,"enemy":true,"damage":1 if easy or danmaku else 2,"r":radius,"life":5.0,"solid":kind in ["solid","bomb"]}
 	if kind=="home": b.home = 1.6
 	if kind=="bomb": b.bomb = true
 	bullets.append(b)
@@ -1276,17 +1306,17 @@ func update_bullets(dt: float):
 			if b.get("bomb",false):
 				b.v.y += 520*dt
 				if on_ground(b.p.x,b.p.y+b.r) and b.v.y>0:
-					for side in [-1,1]: enemy_shot(Vector2(b.p.x,594),Vector2(side*210,0),7)
+					for side in [-1,1]: add_enemy_bullet(Vector2(b.p.x,594),Vector2(side*210,0),7)
 					burst(b.p,Color("ffb35a"),10)
 					bullets.remove_at(i)
 					continue
 			if saber_active() and not b.get("solid",false) and saber_rect().grow(b.r).has_point(b.p):
 				parries += 1
 				# The first frames of the swing reflect the shot back as a homing bolt.
-				if saber_time>JUST_WINDOW:
+				if saber_time>(DANMAKU_JUST_WINDOW if danmaku else JUST_WINDOW):
 					b.enemy = false
 					b.v = Vector2(saber_facing*900,0)
-					b.damage = 4
+					b.damage = 1 if danmaku else 3
 					b.reflected=true
 					b.seek = true
 					b.life = 2.0
@@ -1300,6 +1330,8 @@ func update_bullets(dt: float):
 					hitstop = maxf(hitstop,0.03)
 					sound("charge")
 				else:
+					# A late block only cancels the shot and leaves the saber slower to come back.
+					if not danmaku: saber_cooldown = minf(1.4,saber_cooldown+0.2)
 					burst(b.p,CYAN,8)
 					bullets.remove_at(i)
 				continue
@@ -1308,10 +1340,7 @@ func update_bullets(dt: float):
 				if dash_timer>0:
 					if not b.get("grazed",false):
 						b.grazed = true
-						saber_cooldown = 0
-						score+=60
-						just_dodges+=1
-						popup(player-Vector2(0,95),"JUST DODGE  SABER READY",CYAN)
+						just_dodge_reward()
 					continue
 				hurt(b.damage)
 				remove = true
@@ -1452,7 +1481,7 @@ func _draw():
 			draw_line(Vector2(x+130,610),Vector2(x+130,390),CYAN if int(room/4)<=checkpoint else Color("466477"),3)
 			txt(Vector2(x+150,428),"RELAY %02d"%(room/4+1),18,CYAN)
 		if room < 4:
-			var tips = [move_label()+"  移動     "+lbl("jump")+"  ジャンプ（2回）", lbl("fire")+"  押すたびに射撃     長押しでため撃ち（金色で貫通）", lbl("dash")+"  ダッシュ・無敵     弾をくぐり抜けるとセーバーが即再使用", lbl("saber")+"  セーバー：弾を消す     振り始めで当てると敵を追う反射弾"]
+			var tips = [move_label()+"  移動     "+lbl("jump")+"  ジャンプ（2回）", lbl("fire")+"  押すたびに射撃     長押しでため撃ち（金色で貫通）", lbl("dash")+"  ダッシュ・無敵     弾をくぐると次の1発がMAXため撃ち＋スロー", lbl("saber")+"  セーバー：弾を消す     振り始めで当てると敵を追う反射弾"]
 			txt(Vector2(x+100,265),tips[room],22,CYAN)
 			if room==1: txt(Vector2(x+100,235),lbl("down").get_slice("（",0)+" ＋ "+lbl("jump").get_slice(" / ",0)+"  足場から飛び降りる",18,Color("bdcbe2"))
 			if room==3: txt(Vector2(x+100,235),"オレンジのトゲ弾はセーバーで消せない — 跳ぶかダッシュで避けよう",18,Color("ff9a3c"))
@@ -1569,7 +1598,7 @@ func _draw():
 	if state == "clear":
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
 		art_sprite("poses",3,Vector2(1090,535),220)
-		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else ""),14,Color("ffe28a"))
+		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else (" / 弾幕" if danmaku else "")),14,Color("ffe28a"))
 		txt(Vector2(875,395),clear_rank(),78,Color("ffe28a"))
 		txt(Vector2(300,501),"SCORE %07d   最大コンボ %d   被ダメージ %d"%[score,max_combo,damage_taken],20,Color("ffe28a"))
 		txt(Vector2(440,525),confirm_label()+" / クリックでもう一度",24,CYAN)
@@ -1702,8 +1731,8 @@ func draw_title():
 	draw_rect(Rect2(100,542,480,44),Color(0.03,0.07,0.13,0.86))
 	draw_rect(Rect2(100,542,480,44),Color(0.4,0.8,0.85,0.38),false,1)
 	draw_rect(Rect2(100,542,3,44),Color("ffe28a"))
-	txt(Vector2(117,570),("Y / 十字↑↓" if using_pad else "E")+"  難易度："+("アシスト" if easy else "ノーマル"),17,Color("edf6ff"))
-	txt(Vector2(390,570),"体力増 / 弾速低下" if easy else "基本ルール",13,Color("b2c7da"))
+	txt(Vector2(117,570),("Y / 十字↑↓" if using_pad else "E")+"  難易度："+("アシスト" if easy else ("弾幕" if danmaku else "ノーマル")),17,Color("edf6ff"))
+	txt(Vector2(390,570),"体力増 / 弾速低下" if easy else ("敵弾3倍 / 連続反射" if danmaku else "基本ルール"),13,Color("b2c7da"))
 	var settings_hover=Rect2(100,596,480,40).has_point(get_global_mouse_position())
 	draw_rect(Rect2(100,596,480,40),Color(0.06,0.14,0.22,0.92) if settings_hover else Color(0.03,0.07,0.13,0.86))
 	draw_rect(Rect2(100,596,480,40),Color(0.4,0.8,0.85,0.38),false,1)
@@ -1730,7 +1759,7 @@ func draw_hud():
 	txt(Vector2(340,50),sector_names[mini(6,int(player.x/(ROOM*4)))],22)
 	txt(Vector2(780,45),"%07d pt"%score,21,Color("ffe28a"))
 	if combo>1: txt(Vector2(780,64),"連続撃破 %d  ×%.1f"%[combo,combo_multiplier()],13,Color("ffe28a"))
-	var charge_text = "MAX" if charge>=FULL_CHARGE else ("READY" if charge>=0.8 else lbl("fire").get_slice(" / ",0)+" 長押し")
+	var charge_text = "MAX（ジャスト）" if dodge_charge>0 else ("MAX" if charge>=FULL_CHARGE else ("READY" if charge>=0.8 else lbl("fire").get_slice(" / ",0)+" 長押し"))
 	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + charge_text + "     SABER  " + ("READY" if saber_cooldown<=0 else "…") + "     CORE  %d / 6"%core_count,14,CYAN)
 	txt(Vector2(1045,50),time_text(),25)
 	txt(Vector2(1045,80),"撃破 %02d"%kills+("" if using_pad else "  /  M 音"),15,Color("bdcbe2"))
@@ -2236,6 +2265,45 @@ func motion_test():
 		update_game(1.0/60)
 	if boss_cycle<1: errors.append("boss acts at left wall")
 	if absf(camera_x-(END_X-W))>2: errors.append("boss arena camera")
+	# A just dodge loads a full charge into the next tap.
+	start_game()
+	player=Vector2(180,610)
+	grounded=true
+	invincible=999
+	dash_timer=0.1
+	saber_cooldown=0.5
+	enemy_shot(player+Vector2(0,-40),Vector2.LEFT)
+	update_bullets(0)
+	dash_timer=0
+	bullets.clear()
+	if dodge_charge<=0 or saber_cooldown>0 or dash_cooldown>0: errors.append("just dodge reward")
+	prev_fire=false
+	test_key(KEY_X,true)
+	update_game(1.0/60)
+	test_key(KEY_X,false)
+	update_game(1.0/60)
+	if bullets.filter(func(b): return not b.enemy and b.get("pierce",false)).is_empty(): errors.append("dodge charge shot")
+	# Danmaku: triple fire, a fast saber that swings during a dash, weaker reflections.
+	bullets.clear()
+	danmaku=true
+	enemy_shot(Vector2(600,400),Vector2.LEFT*200)
+	if bullets.size()!=3: errors.append("danmaku triples fire")
+	bullets.clear()
+	saber_cooldown=0
+	saber_time=0
+	prev_saber=false
+	dash_timer=0.1
+	test_key(KEY_K,true)
+	update_game(1.0/60)
+	test_key(KEY_K,false)
+	if saber_time<=0 or saber_cooldown>DANMAKU_SABER_COOLDOWN: errors.append("danmaku saber during dash")
+	saber_time=0.21
+	saber_facing=1
+	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
+	update_bullets(0)
+	if bullets.is_empty() or bullets[0].enemy or bullets[0].damage!=1: errors.append("danmaku reflection")
+	danmaku=false
+	bullets.clear()
 	# The sentinel keeps fighting even when Lumina stays at the room's left edge.
 	start_game()
 	invincible=999
@@ -2601,6 +2669,24 @@ func steer_reflection(b: Dictionary, dt: float):
 	if target==Vector2.INF: return
 	var speed = b.v.length()
 	b.v = b.v.lerp((target-b.p).normalized()*speed,minf(1,dt*9)).normalized()*speed
+
+func cycle_difficulty(step: int):
+	var mode = (1 if easy else (2 if danmaku else 0))
+	mode = (mode+step+3)%3
+	easy = mode==1
+	danmaku = mode==2
+
+# Dodging through fire pays back: saber and dash ready, the next shot fully charged, and a brief slow-down.
+func just_dodge_reward():
+	saber_cooldown = 0
+	dash_cooldown = 0
+	dodge_charge = 3.0
+	score += 60
+	just_dodges += 1
+	if slow_cool<=0:
+		slow_time = 0.35
+		slow_cool = 1.5
+	popup(player-Vector2(0,95),"JUST DODGE  次弾MAX",CYAN)
 
 func reflection_reward(at: Vector2):
 	score+=150
