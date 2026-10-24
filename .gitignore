@@ -3,3 +3,4 @@ runtime/
 *.exe
 *.zip
 test-output/
+build/

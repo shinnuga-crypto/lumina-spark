@@ -1,5 +1,13 @@
 # 引き継ぎ
 
+## 2026-10-24 GPT（単体EXE・GitHub公開準備）
+
+- `export_presets.cfg`：Godot 4.7.2 Windows x86_64 Release、PCK内蔵、コンソールラッパー／外部ANGLE・D3D12 DLLなし。素材のJSONも明示的に同梱。`build/windows/LuminaSpark.exe`（151,676,240バイト）単体で起動可能。
+- `tools/build-windows.ps1`：インポート→EXE→遊び方/エンジンライセンス→ZIP→SHA-256。Godotを `-GodotExe` で指定可能。PowerShell互換のUTF-8 BOM。ビルド用APPDATAはbuild内へ分離して終了時に元へ戻す。エクスポートテンプレートは同じPCの既存4.7.2.stableからruntime内へコピー、他プロジェクトは変更なし。生成物はbuild/でGit対象外。
+- 完成ZIP：`build/LuminaSpark-v1.0.0-windows-x64.zip`（81,261,006バイト）。EXEのSHA-256：`52d0581adfe8139959758309464857d7e325f74318cc6f527f81f77b19c220cd`。ZIPとEXEのハッシュ一覧は `build/SHA256SUMS.txt`。
+- 別フォルダーにEXEだけコピーし、SELF / MOTION成功、ネイティブ22画面出力とタイトル目視確認、各エラーログ空。EXE内PCKをGodotエディターで読み外部経路ドライバーで検査：197秒相当、62体、6コア、番人1体、6扉閉鎖、ボス、落下0でPASS（被ダメージ無効）。配布版テンプレート単体の外部 `--script` 検査は実行されないため待機プロセスを終了し、内蔵PCK検査で確認した。
+- 未完了：GitHub CLI未ログインのためリポジトリ作成・プッシュ・Release添付待ち。ユーザーは公開を選択済み、予定先 `shinnuga-crypto/lumina-spark`。アプリ内GitHub連携は接続済みだが新規リポジトリ／Releaseアップロードの機能がない。次：ユーザーが `gh auth login` 後、ゲームだけのsubtree履歴を通常プッシュしv1.0.0へEXE/ZIP/ハッシュを添付。詳細 `GITHUB公開手順.md`。親Codex全体は送らない。
+
 ## 2026-10-24 GPT（タイトル・一枚イラスト）
 
 - 正式表示を「LUMINA SPARK — 星炉のリベリオン —」へ。GPTImageでタイトル用一枚絵と透過ロゴを生成し `assets/title/` へ保存。夜の発電都市・金色の星炉とルミナを右側、ロゴ・副題・メニューを左側へ配置。生成全文は同フォルダーの `PROMPTS.md`。

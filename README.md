@@ -6,7 +6,9 @@
 
 ## 遊び方
 
-**このフォルダーの `起動.cmd` をダブルクリック**してください。インストール・インターネット・ブラウザーは不要です。Enterまたは「出撃する」で開始します。フォルダーごと移動しても起動できます。実行環境は `runtime/Godot.exe` を同梱しています。
+**配布版は `LuminaSpark.exe` をダブルクリック**してください。画像とBGMをEXEに内蔵しており、単体で起動します。インストール・Godot・インターネット・ブラウザーは不要です。Windows 10/11 x64、OpenGL 3.3対応環境向け。Enterまたは「出撃する」で開始します。ZIP版には同じEXEと遊び方、Godotのライセンス表示を同梱します。
+
+開発フォルダーでは `起動.cmd` からも起動できます（`runtime/Godot.exe` が必要）。GitHubのソースにはGodot本体を含めません。
 
 - 移動：← → / A D
 - ジャンプ：Z / Space（空中でもう一度押すと二段ジャンプ）
@@ -58,6 +60,8 @@
 ユーザー提供の **Heroic Quest.mp3** を道中、**Untitled.mp3** をミニボス・最終ボス戦に使用します。両曲をループし、切替時は0.4秒フェードイン。ミニボス撃破後は道中曲へ戻り、最終ボス撃破時は止まります。MでBGMと効果音を切り替えます。元のMP3は再圧縮せずコピーしています。
 
 ## 制作・検証
+
+Windows単体EXEのビルド：Godot 4.7.2と同バージョンのWindows x86_64エクスポートテンプレートを用意し、`powershell -ExecutionPolicy Bypass -File tools/build-windows.ps1 -GodotExe "C:\Godot\Godot.exe"`。出力は `build/windows/LuminaSpark.exe`、配布ZIPは `build/LuminaSpark-v1.0.0-windows-x64.zip`、ハッシュは `build/SHA256SUMS.txt`。ローカルの同梱Godotを使う場合は `-GodotExe` を省略できます。PCK埋め込みと外部DLL不要の設定は `export_presets.cfg` に保存しています。[Windowsエクスポートの公式説明](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_windows.html)。
 
 Godot 4.7.2 / GDScript。画像は組み込みGPTImage、BGMは上記のユーザー提供曲、効果音はオリジナルのプログラム合成です。画像のプロンプトは `assets/PROMPTS.md`、`assets/PROMPTS-v2.md`、`assets/motion/PROMPTS-rig.md`、`assets/motion/PROMPTS-arms-air.md`、`assets/improvements/PROMPTS.md`、`assets/title/PROMPTS.md` に保存しています。
 
