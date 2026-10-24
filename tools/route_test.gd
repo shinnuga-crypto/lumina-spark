@@ -49,7 +49,7 @@ func run():
 						target=c.p.x
 						jump=true
 			var local=game.player.x-room*1120
-			if local>660 and local<930 and room>1 and room%4!=0: jump=true
+			if local>660 and local<930 and room>1 and room%4!=0 and room%4!=3: jump=true
 			if jump and game.grounded and jump_age<0: jump_age=0
 			var pulse=false
 			if jump_age>=0:
@@ -57,14 +57,17 @@ func run():
 				jump_age+=1
 				if jump_age>=55: jump_age=-1
 			step(target,pulse)
-			if game.state=="dead":
+			if game.state=="dead" or game.falls>0:
 				failures.append("fall room %d at %s"%[room,game.player])
 				break
 			if game.player.x>=room*1120+1060:
 				complete=true
 				break
 		if not complete:
-			failures.append("room %d blocked at %s"%[room,game.player])
+			var left=[]
+			for e in game.enemies:
+				if e.room==room and e.hp>0: left.append([e.kind,e.p,e.hp])
+			failures.append("room %d blocked at %s enemies=%s"%[room,game.player,left])
 			break
 		print("ROOM ",room+1," PASS / t=",int(ticks/60)," cores=",game.core_count)
 	if failures.is_empty():

@@ -40,6 +40,8 @@ var elapsed = 0.0
 var clock = 0.0
 var kills = 0
 var deaths = 0
+var falls = 0
+var safe_pos = Vector2(130, 610)
 var checkpoint = 0
 var easy = false
 var muted = false
@@ -123,9 +125,9 @@ func build_level():
 		else: platforms.append(Rect2(x + 660, 465, 170, 24))
 		pickups.append(Vector2(x + 700, 330 if room % 2 == 0 else 425))
 		if room > 0:
-			spawn_enemy(Vector2(x + 440, 586), 0, room)
+			spawn_enemy(Vector2(x + 440, 600), 0, room)
 			spawn_enemy(Vector2(x + 730, 415), 1, room)
-		if room > 2: spawn_enemy(Vector2(x + 990, 586), 0, room)
+		if room > 2: spawn_enemy(Vector2(x + 990, 600), 0, room)
 		if room % 4 == 3:
 			gates.append({"x": x + 1080, "room": room, "open": false})
 			cores.append({"p":Vector2(x+740,420),"room":room,"got":false,"sync":18.0,"wave":false})
@@ -157,6 +159,8 @@ func start_game():
 	elapsed = 0
 	kills = 0
 	deaths = 0
+	falls = 0
+	safe_pos = Vector2(130, 610)
 	checkpoint = 0
 	boss_hp = boss_max_hp
 	boss_active = false
@@ -183,11 +187,11 @@ func _unhandled_input(event):
 		if event.keycode == KEY_M:
 			muted = not muted
 			if muted: music.stop()
-			elif state != "title": music.play()
+			elif state in ["play", "pause", "dead"]: music.play()
 		if event.keycode == KEY_ESCAPE:
 			if state == "play": state = "pause"
 			elif state == "pause": state = "play"
-		if event.keycode == KEY_ENTER:
+		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
 			if state == "title" or state == "clear": start_game()
 			elif state == "dead": respawn()
 			elif state == "pause": state = "play"
@@ -199,11 +203,14 @@ func _unhandled_input(event):
 			elif state == "dead": respawn()
 			elif state == "pause": state = "play"
 			elif state == "play": state = "pause"
+		if event.button_index == JOY_BUTTON_A and state in ["title", "clear", "dead"]:
+			if state == "dead": respawn()
+			else: start_game()
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var m = get_global_mouse_position()
 		if state == "title":
 			if Rect2(100, 462, 360, 64).has_point(m): start_game()
-			elif Rect2(100, 542, 410, 44).has_point(m): easy = not easy
+			elif Rect2(100, 542, 480, 44).has_point(m): easy = not easy
 		elif state == "dead": respawn()
 		elif state == "clear": start_game()
 		elif state == "pause": state = "play"
@@ -280,6 +287,7 @@ func update_game(dt: float):
 			velocity.y = 0
 			grounded = true
 			jumps = 0
+			if player.x - 30 > p.position.x and player.x + 30 < p.end.x: safe_pos = player
 	for gate in gates:
 		if not gate.open:
 			var alive = false
@@ -294,7 +302,15 @@ func update_game(dt: float):
 			elif player.x > gate.x - 25 and player.x < gate.x + 110:
 				player.x = gate.x - 25
 				velocity.x = 0
-	if player.y > 850: hurt(99)
+	if player.y > 850:
+		# 穴への落下は即死にせず、少し減って直前の足場へ戻る
+		falls += 1
+		invincible = 0
+		hurt(2 if easy else 3)
+		if state == "play":
+			player = safe_pos
+			velocity = Vector2.ZERO
+			dash_timer = 0
 	if state != "play": return
 	for core in cores:
 		if core.got and core.sync>0:
@@ -302,9 +318,9 @@ func update_game(dt: float):
 			if core.sync<10 and not core.wave:
 				core.wave = true
 				var base = core.room*ROOM
-				spawn_enemy(Vector2(base+450,586),0,core.room)
+				spawn_enemy(Vector2(base+450,600),0,core.room)
 				spawn_enemy(Vector2(base+650,400),1,core.room)
-				spawn_enemy(Vector2(base+980,586),0,core.room)
+				spawn_enemy(Vector2(base+980,600),0,core.room)
 				banner = "防衛ドローン接近！ コアの同期完了まで持ちこたえよう"
 				banner_time = 3
 		if not core.got and (player-Vector2(0,30)).distance_to(core.p)<45:
@@ -344,7 +360,7 @@ func update_game(dt: float):
 
 func shoot(big: bool):
 	shot_timer = 0.18
-	bullets.append({"p":player+Vector2(facing*30,-38),"v":Vector2(facing*860,0),"enemy":false,"damage":7 if big else 2,"r":15.0 if big else 5.0,"life":1.8})
+	bullets.append({"p":player+Vector2(facing*30,-48),"v":Vector2(facing*860,0),"enemy":false,"damage":7 if big else 2,"r":15.0 if big else 5.0,"life":1.8})
 	sound("charge" if big else "shot")
 
 func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0):
@@ -358,7 +374,7 @@ func update_enemies(dt: float):
 		e.shot -= dt
 		if e.kind == 0: e.p.x = e.origin.x + sin(e.t*1.4)*75
 		else: e.p.y = e.origin.y + sin(e.t*2)*45
-		if e.shot <= 0 and absf(e.p.x-player.x)<780:
+		if e.shot <= 0 and e.p.x > camera_x + 20 and e.p.x < camera_x + W - 20:
 			e.shot = 2.6 if easy else 1.9
 			enemy_shot(e.p+Vector2(0,-18),(player+Vector2(0,-30)-e.p).normalized()*(200 if easy else 260))
 		if (player+Vector2(0,-27)).distance_to(e.p+Vector2(0,-10)) < 41: hurt(1 if easy else 2)
@@ -392,7 +408,7 @@ func update_bullets(dt: float):
 		var b = bullets[i]
 		b.p += b.v*dt
 		b.life -= dt
-		var remove = b.life <= 0
+		var remove = b.life <= 0 or b.p.x < camera_x - 60 or b.p.x > camera_x + W + 60
 		if b.enemy:
 			if Rect2(player-Vector2(18,62),Vector2(36,62)).grow(b.r).has_point(b.p):
 				hurt(b.damage)
@@ -434,6 +450,7 @@ func hurt(amount: int):
 
 func respawn():
 	player = Vector2(checkpoint*ROOM*4+130,500)
+	safe_pos = Vector2(player.x, 610)
 	velocity = Vector2.ZERO
 	hp = max_hp
 	invincible = 2
@@ -574,7 +591,7 @@ func draw_title():
 	txt(Vector2(100,417),"夜空の発電都市へ。暴走した星炉を止めよう。",21,Color("bdcbe2"))
 	draw_rect(Rect2(100,462,360,64),CYAN)
 	txt(Vector2(145,504),"出撃する  /  ENTER",25,Color("102536"))
-	draw_rect(Rect2(100,542,410,44),Color("21314a"))
+	draw_rect(Rect2(100,542,480,44),Color("21314a"))
 	txt(Vector2(116,571),"E：難易度  " + ("アシスト（体力多め・弾速ゆっくり）" if easy else "ノーマル"),18)
 	txt(Vector2(100,627),"移動：← → / A D   ジャンプ：Z / Space   射撃：X / J",18,Color("bdcbe2"))
 	txt(Vector2(100,659),"チャージ：V   ダッシュ：Shift / C   ポーズ：Esc   音：M",18,Color("bdcbe2"))
@@ -653,6 +670,7 @@ func self_test():
 	respawn()
 	if hp!=max_hp or player.x<ROOM*12: errors.append("checkpoint")
 	player=Vector2(BOSS_X+200,610)
+	camera_x=END_X-W
 	update_boss(0.016)
 	if not boss_active: errors.append("boss activation")
 	boss_hp=2
