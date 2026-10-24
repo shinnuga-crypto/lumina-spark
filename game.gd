@@ -7,6 +7,9 @@ const BOSS_X = ROOM * 24
 const END_X = BOSS_X + 1200
 const CYAN = Color("63f4e6")
 const PINK = Color("ff82c6")
+# Elbow pivot inside each arm texture (pixels); the arm is drawn as two slices around it.
+const ARM_ELBOW = {"gun_arm":[135,268],"free_arm":[118,318]}
+const ARM_OVERLAP = 22.0
 var layout: Array = []
 var moving: Array[Dictionary] = []
 var art: Dictionary = {}
@@ -1351,14 +1354,35 @@ func walk_arm(phase: float, gun: bool) -> Dictionary:
 	var tip = Vector2(part.end[0],part.end[1])
 	# Positive swings the arm back; a running swing reaches further forward than back.
 	var swing = cos(phase*TAU/8)*(-1.0 if gun else 1.0)
-	var angle = walk_lean()+(swing*0.6 if swing>0 else swing*0.95)
-	if gun and walk_aiming(): angle = part.aim_angle
-	var socket = root+((tip-origin)*part.scale).rotated(angle)
-	return {"root":root,"angle":angle,"muzzle":socket,"name":name,"scale":part.scale}
+	var angle = walk_lean()+(swing*0.6 if swing>0 else swing*1.1)
+	# The elbow folds the forearm up, most when the arm drives forward. The heavy cannon folds less.
+	var bend = (1.25+0.7*clampf(-swing,0,1)-0.15*clampf(swing,0,1))*(0.6 if gun else 1.0)
+	if gun and walk_aiming():
+		angle = part.aim_angle
+		bend = 0.0
+	var elbow_tex = Vector2(ARM_ELBOW[name][0],ARM_ELBOW[name][1])
+	var elbow = root+((elbow_tex-origin)*part.scale).rotated(angle)
+	var socket = elbow+((tip-elbow_tex)*part.scale).rotated(angle-bend)
+	return {"root":root,"angle":angle,"bend":bend,"elbow":elbow,"muzzle":socket,"name":name,"scale":part.scale}
 
 func draw_walk_arm(at: Vector2, phase: float, gun: bool):
 	var arm = walk_arm(phase,gun)
-	draw_rig_piece(arm.name,arm.root,arm.angle,arm.scale,at)
+	var texture = rig_textures[arm.name]
+	var part = motion_meta.rig[arm.name]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var elbow_tex = Vector2(ARM_ELBOW[arm.name][0],ARM_ELBOW[arm.name][1])
+	# Forearm first, upper arm on top; the slices overlap so the elbow has no gap.
+	draw_rig_slice(texture,elbow_tex,arm.elbow,arm.angle-arm.bend,arm.scale,elbow_tex.y-ARM_OVERLAP,texture.get_height(),at)
+	draw_rig_slice(texture,origin,arm.root,arm.angle,arm.scale,0,elbow_tex.y+ARM_OVERLAP,at)
+
+func draw_rig_slice(texture: Texture2D, pivot: Vector2, root: Vector2, angle: float, scale: float, top: float, bottom: float, at: Vector2):
+	var w = float(texture.get_width())
+	var h = float(texture.get_height())
+	var points = PackedVector2Array()
+	for p in [Vector2(0,top),Vector2(w,top),Vector2(w,bottom),Vector2(0,bottom)]:
+		var position = root+((p-pivot)*scale).rotated(angle)
+		points.append(at+Vector2(position.x*facing,position.y))
+	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2(0,top/h),Vector2(1,top/h),Vector2(1,bottom/h),Vector2(0,bottom/h)]),texture)
 
 func draw_rig_piece(name: String, root: Vector2, angle: float, scale: float, at: Vector2):
 	var texture = rig_textures[name]
