@@ -141,6 +141,8 @@ func run():
 				ticks+=1
 			if game.state=="clear": break
 		if game.state!="clear": failures.append("boss not cleared")
+		for door in game.gates:
+			if not door.passed or door.open: failures.append("door %d was not sealed after crossing"%door.room)
 	for code in held.keys(): press(code,false)
 	print("ROUTE TEST: ","PASS" if failures.is_empty() else "FAIL"," ",failures," ticks=",ticks," seconds=",ticks/60," kills=",game.kills," cores=",game.core_count)
 	await process_frame

@@ -100,6 +100,11 @@ const FULL_CHARGE = 1.6
 # The saber is active while saber_time is 0.07..0.28; only its first 0.05 s reflects.
 const JUST_WINDOW = 0.23
 const DOOR_KINDS = ["sync","switch","kill","break","sync","switch"]
+const DOOR_FLOOR = 610.0
+const DOOR_TOP = 438.0
+const DOOR_HALF_WIDTH = 24.0
+const PLAYER_HALF_WIDTH = 20.0
+const DOOR_PLAYER_HEIGHT = 100.0
 var fixed_seed = false
 var alert_cool = 0.0
 var music: AudioStreamPlayer
@@ -217,7 +222,7 @@ func build_level():
 		if d.has("core"):
 			# Each area's door opens a different way so the exits do not repeat.
 			var kind = DOOR_KINDS[gates.size()%DOOR_KINDS.size()]
-			var gate = {"x":x+1080,"room":room,"open":false,"kind":kind,"lift":0.0,"hp":21,"switches":[]}
+			var gate = {"x":x+1080,"room":room,"open":false,"entered":false,"passed":false,"kind":kind,"lift":0.0,"hp":21,"switches":[]}
 			if kind=="switch":
 				for y in ([470,370] if room==23 else [450]): gate.switches.append({"p":Vector2(x+1058,y),"on":false})
 			gates.append(gate)
@@ -482,7 +487,8 @@ func update_game(dt: float):
 		var low_gravity = field_area()==5
 		velocity.y = minf(560.0 if low_gravity else 900.0, velocity.y + (900.0 if low_gravity else 1600.0) * dt)
 	var old_y = player.y
-	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, 24, END_X - 30)
+	var old_x = player.x
+	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, backtrack_limit(), END_X - 30)
 	player.y += velocity.y * dt
 	grounded = false
 	for p in platforms:
@@ -497,18 +503,7 @@ func update_game(dt: float):
 				for m in moving:
 					if platforms[m.index]==p: is_moving = true
 				if not is_moving: safe_pos = player
-	for gate in gates:
-		if gate.open:
-			gate.lift = minf(1,gate.lift+dt*1.8)
-			continue
-		if door_ready(gate):
-			gate.open = true
-			shake = maxf(shake,5)
-			sound("win" if gate.kind=="break" else "heal")
-			if absf(player.x - gate.x) < 1200: burst(Vector2(gate.x,500),CYAN,22)
-		elif player.x > gate.x - 25 and player.x < gate.x + 110:
-			player.x = gate.x - 25
-			velocity.x = 0
+	update_doors(dt,Vector2(old_x,old_y))
 	if player.y > 850:
 		# 穴への落下は即死にせず、少し減って直前の足場へ戻る
 		falls += 1
@@ -516,6 +511,7 @@ func update_game(dt: float):
 		hurt(2 if easy else 3)
 		if state == "play":
 			player = safe_pos
+			player.x = maxf(player.x,backtrack_limit())
 			velocity = Vector2.ZERO
 			dash_timer = 0
 	if state != "play": return
@@ -545,7 +541,7 @@ func update_game(dt: float):
 					banner = "スターコア回収  %d / 6  —  扉のスイッチを撃ち抜け！"%core_count
 				"break":
 					core.sync = 0
-					banner = "スターコア回収  %d / 6  —  ため撃ちで扉を破壊しよう"%core_count
+					banner = "スターコア回収  %d / 6  —  ため撃ちで扉のロックを破壊しよう"%core_count
 				"kill":
 					core.sync = 0
 					var base = core.room*ROOM
@@ -597,7 +593,13 @@ func shoot(big: bool, full = false):
 	shot_timer = 0.14
 	# A full charge pierces every enemy in its path.
 	var damage = 12 if full else (7 if big else 2)
-	bullets.append({"p":muzzle_position(),"v":Vector2(facing*(980 if full else 860),0),"enemy":false,"damage":damage,"r":21.0 if full else (15.0 if big else 5.0),"life":1.8,"pierce":full,"hits":[]})
+	var radius = 21.0 if full else (15.0 if big else 5.0)
+	var origin = muzzle_position()
+	# The cannon may extend past a wall when standing close. Keep the shot on this side.
+	for gate in gates:
+		if door_blocks_at(gate,origin.y) and gate.x>minf(player.x,origin.x) and gate.x<maxf(player.x,origin.x):
+			origin.x = gate.x-facing*(DOOR_HALF_WIDTH+radius+1)
+	bullets.append({"p":origin,"v":Vector2(facing*(980 if full else 860),0),"enemy":false,"damage":damage,"r":radius,"life":1.8,"pierce":full,"hits":[]})
 	if full: shake = maxf(shake,4)
 	sound("charge" if big else "shot")
 
@@ -656,6 +658,7 @@ func gate_of(room: int) -> Dictionary:
 	return {"kind":"sync"}
 
 func door_ready(gate: Dictionary) -> bool:
+	if gate.passed: return false
 	for core in cores:
 		if core.room==gate.room and (not core.got or core.sync>0): return false
 	if gate.kind in ["sync","kill"]:
@@ -666,16 +669,74 @@ func door_ready(gate: Dictionary) -> bool:
 		if not s.on: return false
 	return true
 
-# True when a closed door stands between the two x positions.
-func door_between(a: float, b: float) -> bool:
+func door_gap_top(gate: Dictionary) -> float:
+	return DOOR_FLOOR-(DOOR_FLOOR-DOOR_TOP)*gate.lift
+
+func door_blocks_at(gate: Dictionary, y: float) -> bool:
+	return gate.passed or not gate.open or y<door_gap_top(gate) or y>DOOR_FLOOR
+
+func backtrack_limit() -> float:
+	var limit = 24.0
 	for gate in gates:
-		if not gate.open and gate.x>minf(a,b) and gate.x<maxf(a,b): return true
+		if gate.passed: limit=maxf(limit,gate.x+DOOR_HALF_WIDTH+PLAYER_HALF_WIDTH)
+	return limit
+
+func update_doors(dt: float, previous: Vector2):
+	for gate in gates:
+		if gate.passed:
+			gate.lift = maxf(0,gate.lift-dt*4.0)
+			var stop = gate.x+DOOR_HALF_WIDTH+PLAYER_HALF_WIDTH
+			if player.x<=stop:
+				player.x=stop
+				if velocity.x<0: velocity.x=0
+			continue
+		else:
+			if not gate.open and door_ready(gate):
+				gate.open = true
+				shake = maxf(shake,5)
+				sound("win" if gate.kind=="break" else "heal")
+				if absf(player.x-gate.x)<1200: burst(Vector2(gate.x,500),CYAN,22)
+			if gate.open: gate.lift=minf(1,gate.lift+dt*1.8)
+		var gap_top = door_gap_top(gate)
+		var overlaps = absf(player.x-gate.x)<DOOR_HALF_WIDTH+PLAYER_HALF_WIDTH
+		# A persistent header above the opening also acts as a ceiling inside the doorway.
+		if gate.open and not gate.passed and overlaps and previous.y-DOOR_PLAYER_HEIGHT>=gap_top and player.y-DOOR_PLAYER_HEIGHT<gap_top and velocity.y<0:
+			player.y=gap_top+DOOR_PLAYER_HEIGHT
+			velocity.y=0
+		var fits = gate.open and not gate.passed and player.y-DOOR_PLAYER_HEIGHT>=gap_top and player.y<=DOOR_FLOOR+1
+		if fits and player.x>=gate.x: gate.entered=true
+		if gate.open and gate.entered and player.x>=gate.x+DOOR_HALF_WIDTH+PLAYER_HALF_WIDTH+8:
+			gate.passed=true
+			gate.open=false
+			# A fall immediately after crossing must recover on the destination side.
+			safe_pos=Vector2(maxf(player.x,gate.x+90),DOOR_FLOOR)
+			sound("dash")
+			burst(Vector2(gate.x,525),PINK,10)
+			if absf(player.x-gate.x)<500:
+				banner="後方の扉をロック — この先へ進もう"
+				banner_time=2
+			continue
+		if not fits:
+			var clearance = DOOR_HALF_WIDTH+PLAYER_HALF_WIDTH
+			if previous.x<=gate.x and player.x>gate.x-clearance:
+				player.x=gate.x-clearance
+				velocity.x=0
+			elif previous.x>gate.x and player.x<gate.x+clearance:
+				player.x=gate.x+clearance
+				velocity.x=0
+
+# Without a height, used to keep enemies on the far side inactive until passage opens.
+func door_between(a: float, b: float, y = INF) -> bool:
+	for gate in gates:
+		var blocked = gate.passed or not gate.open or gate.lift<0.99
+		if y!=INF: blocked=door_blocks_at(gate,y)
+		if blocked and gate.x>minf(a,b) and gate.x<maxf(a,b): return true
 	return false
 
 # Lumina's shot hits a door switch or the breakable door face. Returns true when the bullet is spent.
 func hit_door_parts(b: Dictionary) -> bool:
 	for gate in gates:
-		if gate.open or absf(gate.x-b.p.x)>60: continue
+		if gate.open or gate.passed or absf(gate.x-b.p.x)>60: continue
 		for s in gate.switches:
 			if not s.on and Rect2(s.p-Vector2(16,24),Vector2(32,48)).grow(b.r).has_point(b.p):
 				s.on = true
@@ -704,6 +765,7 @@ func on_ground(x: float, y: float) -> bool:
 func update_enemies(dt: float):
 	for e in enemies:
 		if e.hp<=0 or absf(e.p.x-player.x)>1300: continue
+		var previous_pos = e.p
 		e.t += dt
 		e.flash -= dt
 		e.shot -= dt
@@ -750,10 +812,18 @@ func update_enemies(dt: float):
 			5:
 				e.p.x = e.origin.x+sin(e.t)*85
 				e.p.y = e.origin.y+sin(e.t*2)*25
+		# Patrols and shield movement must obey the same persistent bulkheads as rushes.
+		for gate in gates:
+			if not door_blocks_at(gate,e.p.y-20): continue
+			if previous_pos.x<=gate.x and e.p.x>gate.x-DOOR_HALF_WIDTH-30:
+				e.p.x=gate.x-DOOR_HALF_WIDTH-30
+			elif previous_pos.x>gate.x and e.p.x<gate.x+DOOR_HALF_WIDTH+30:
+				e.p.x=gate.x+DOOR_HALF_WIDTH+30
 		# Bursts fire the rest of a volley a few frames apart.
 		if e.get("burst",0)>0:
+			if not on_screen: e.burst=0
 			e.bt = e.get("bt",0.0)-dt
-			if e.bt<=0:
+			if e.bt<=0 and e.burst>0:
 				e.burst -= 1
 				e.bt = 0.14
 				enemy_shot(e.p+Vector2(0,-18),aim*speed*1.1)
@@ -775,7 +845,7 @@ func update_enemies(dt: float):
 						for j in range(3): enemy_shot(e.p+Vector2(0,-18),aim.rotated((j-1)*0.16)*speed,7)
 				5:
 					enemy_shot(e.p,Vector2(signf(player.x-e.p.x)*70,40),13,"bomb")
-		if (player+Vector2(0,-40)).distance_to(e.p+Vector2(0,-10))<48: hurt(1 if easy else 2)
+		if not door_between(player.x,e.p.x) and (player+Vector2(0,-40)).distance_to(e.p+Vector2(0,-10))<48: hurt(1 if easy else 2)
 
 func update_boss(dt: float):
 	if player.x<BOSS_X+100 or boss_hp<=0: return
@@ -849,7 +919,7 @@ func update_bullets(dt: float):
 			bullets.remove_at(i)
 			continue
 		# Closed doors are solid walls: nothing crosses them.
-		if door_between(old_x-b.r*signf(b.v.x),b.p.x+b.r*signf(b.v.x)) and b.p.y>100:
+		if door_between(old_x-b.r*signf(b.v.x),b.p.x+b.r*signf(b.v.x),b.p.y):
 			burst(b.p,Color("9fb4c8"),3)
 			bullets.remove_at(i)
 			continue
@@ -955,6 +1025,7 @@ func hurt(amount: int):
 
 func respawn():
 	player = Vector2(checkpoint*ROOM*4+130,500)
+	player.x=maxf(player.x,backtrack_limit()+60)
 	safe_pos = Vector2(player.x, 610)
 	velocity = Vector2.ZERO
 	hp = max_hp
@@ -1133,7 +1204,7 @@ func _draw():
 		if full: draw_circle(player+offset-Vector2(0,45),46+sin(clock*20)*3,Color(1,0.85,0.45,0.12))
 	draw_field(offset)
 	for gate in gates:
-		if gate.lift<1 and absf(gate.x-player.x)<1500: draw_door(gate,offset)
+		if absf(gate.x-player.x)<1500: draw_door(gate,offset)
 	if state=="defeat": draw_rect(Rect2(0,0,W,H),Color(1,0.9,0.95,maxf(0,1-absf(ending_time-2.0)*5)))
 	draw_hud()
 	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "K / RB：セーバー（EN消費・出だしで反射）   R / Back：タイトルへ   M：音")
@@ -1183,27 +1254,38 @@ func draw_field(offset: Vector2):
 # Placeholder door art (shapes only) until the GPTImage door sprites exist.
 func draw_door(gate: Dictionary, offset: Vector2):
 	var x = gate.x+offset.x
-	var fade = 1.0-gate.lift
 	# What lies past a closed door stays hidden.
-	if player.x<gate.x: draw_rect(Rect2(x+20,0,maxf(0,W-x-20),H),Color(0.01,0.015,0.04,0.97*fade))
-	var rise = gate.lift*520
-	draw_rect(Rect2(x-24,110,48,500),Color(0.07,0.1,0.17,fade))
-	draw_rect(Rect2(x-24,110,6,500),Color(0.25,0.35,0.5,fade))
-	var panel = Rect2(x-20,250-rise,40,360)
+	if player.x<gate.x and not gate.passed: draw_rect(Rect2(x+24,0,maxf(0,W-x-24),H),Color(0.01,0.015,0.04,0.97*(1-gate.lift)))
+	# Permanent bulkhead and jambs; only the lower doorway retracts.
+	draw_rect(Rect2(x-24,0,48,DOOR_TOP),Color("26344a"))
+	for y in range(120,int(DOOR_TOP)-20,60):
+		draw_line(Vector2(x-20,y),Vector2(x+20,y),Color("3e526b"),3)
+	draw_rect(Rect2(x-30,0,8,DOOR_FLOOR),Color("42536b"))
+	draw_rect(Rect2(x+22,0,8,DOOR_FLOOR),Color("42536b"))
+	draw_rect(Rect2(x-30,DOOR_TOP-20,60,20),Color("5b7188"))
+	var panel = Rect2(x-22,DOOR_TOP,44,maxf(0,door_gap_top(gate)-DOOR_TOP))
 	var cracked = gate.kind=="break" and gate.hp<21
-	draw_rect(panel,Color("3a4a66") if not cracked else Color("5a4a46"))
-	for k in range(5): draw_line(Vector2(x-20,panel.position.y+30+k*70),Vector2(x+20,panel.position.y+30+k*70),Color("22304a"),3)
+	if panel.size.y>0:
+		draw_rect(panel,Color("3a4a66") if not cracked or gate.passed else Color("5a4a46"))
+		for y in range(int(DOOR_TOP)+18,int(panel.end.y)-4,32): draw_line(Vector2(x-20,y),Vector2(x+20,y),Color("22304a"),3)
 	var ready = door_ready(gate)
-	var light = CYAN if ready else (Color("ffe28a") if gate.kind=="switch" else (Color("ffb35a") if gate.kind=="break" else PINK))
-	draw_circle(Vector2(x,panel.position.y+20),7,Color(light,0.6+sin(clock*6)*0.3))
-	if gate.kind=="break":
-		for k in range(3-ceili(gate.hp/7.0)): draw_line(Vector2(x-18,panel.position.y+120+k*60),Vector2(x+16,panel.position.y+160+k*60),Color("ffb35a"),3)
+	var light = PINK if gate.passed else (CYAN if gate.open or ready else (Color("ffe28a") if gate.kind=="switch" else (Color("ffb35a") if gate.kind=="break" else PINK)))
+	draw_circle(Vector2(x,DOOR_TOP-10),6,Color(light,0.7+sin(clock*6)*0.2))
+	if gate.kind=="break" and not gate.passed:
+		for k in range(3-ceili(gate.hp/7.0)):
+			var y = DOOR_TOP+38+k*35
+			if y+20<panel.end.y: draw_line(Vector2(x-18,y),Vector2(x+16,y+20),Color("ffb35a"),3)
 	for s in gate.switches:
 		var c = s.p+offset
 		draw_rect(Rect2(c-Vector2(14,22),Vector2(28,44)),Color("1b2234"))
 		draw_rect(Rect2(c-Vector2(9,16),Vector2(18,32)),Color("ffe28a") if s.on else Color(1,0.35,0.5,0.7+sin(clock*8)*0.3))
-	if gate.open: return
-	var hint = {"sync":"コアを同期 ＋ 区画の敵を全滅で開く","switch":"光るスイッチを撃って開ける","kill":"コア回収後の待ち伏せを全滅で開く","break":"ため撃ちで扉を破壊"}[gate.kind]
+	if gate.passed:
+		txt(Vector2(x-44,DOOR_TOP-30),"後方ロック",15,PINK)
+		return
+	if gate.open:
+		txt(Vector2(x-150,DOOR_TOP-30),"通過後に閉鎖・逆走できません",16,CYAN)
+		return
+	var hint = {"sync":"コアを同期 ＋ 区画の敵を全滅で開く","switch":"光るスイッチを撃って開ける","kill":"コア回収後の待ち伏せを全滅で開く","break":"ため撃ちで扉のロックを破壊"}[gate.kind]
 	txt(Vector2(x-320,235),hint,18,light)
 
 func draw_background():
@@ -1400,7 +1482,7 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "stage", "surge", "door", "movers", "ice", "breakdoor", "defense", "summit", "boss", "phase2", "bullets", "clear"]:
+	for scene in ["title", "stage", "surge", "door", "door-open", "door-locked", "movers", "ice", "breakdoor", "defense", "summit", "boss", "phase2", "bullets", "clear"]:
 		if scene == "stage":
 			start_game()
 			player = Vector2(1500,610)
@@ -1413,6 +1495,17 @@ func capture_qa():
 			camera_x = player.x-390
 			elapsed = spot[2]
 			charge = 0
+		if scene in ["door-open","door-locked"]:
+			var door=gate_of(7)
+			var locked=scene=="door-locked"
+			door.open=not locked
+			door.passed=locked
+			door.entered=locked
+			door.lift=0 if locked else 1
+			for s in door.switches: s.on=true
+			player=Vector2(door.x+(90 if locked else -65),610)
+			camera_x=door.x-500
+			banner_time=0
 		if scene in ["movers","ice","defense","summit"]:
 			var room = {"movers":8,"ice":12,"defense":16,"summit":23}[scene]
 			elapsed = 1.5 if scene=="movers" else 0.0
@@ -1897,7 +1990,7 @@ func update_saber():
 	if not saber_active(): return
 	for i in range(enemies.size()):
 		var enemy = enemies[i]
-		if enemy.hp<=0 or i in saber_hits or not saber_rect().intersects(enemy_rect(enemy)): continue
+		if enemy.hp<=0 or i in saber_hits or door_between(player.x,enemy.p.x) or not saber_rect().intersects(enemy_rect(enemy)): continue
 		saber_hits.append(i)
 		if enemy.get("shield",false):
 			burst(enemy.p,CYAN,5)

@@ -7,6 +7,7 @@ New-Item -ItemType Directory -Force $out,$env:APPDATA | Out-Null
 $jobs=@(
     @{Name='import'; Args='--headless --editor --import --quit'},
     @{Name='self-test'; Args='--headless -- --self-test'},
+    @{Name='doors'; Args='--headless --script res://tools/door_test.gd'},
     @{Name='motion'; Args='--headless -- --motion-test'},
     @{Name='route'; Args='--headless --script res://tools/route_test.gd'}
 )
