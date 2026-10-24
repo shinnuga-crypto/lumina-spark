@@ -1318,6 +1318,8 @@ func draw_rig_bone(name: String, start: Vector2, end: Vector2, at: Vector2):
 
 func draw_walk_rig(at: Vector2, phase: float):
 	var hip = walk_hip(phase)
+	# The left cannon arm is behind both legs and the torso.
+	draw_walk_arm(at,phase,true)
 	for side in ["far","near"]:
 		var leg = gait_leg(phase,side)
 		var ankle = leg.ankle
@@ -1326,13 +1328,12 @@ func draw_walk_rig(at: Vector2, phase: float):
 		draw_rig_bone(side+"_boot",knee,ankle,at)
 		draw_rig_foot(side,ankle,leg.pitch,at)
 	var body = motion_meta.rig.body
-	draw_walk_arm(at,phase,true)
 	draw_rig_piece("body",hip,walk_lean(),body.scale,at)
 	draw_walk_arm(at,phase,false)
 	draw_set_transform(Vector2.ZERO)
 
 func walk_lean() -> float:
-	return deg_to_rad(9)*clampf(absf(velocity.x)/180.0,0,1)
+	return deg_to_rad(20)*clampf(absf(velocity.x)/180.0,0,1)
 
 func walk_aiming() -> bool:
 	return aim_time>0 or charge>0 or key(KEY_X) or key(KEY_J) or joy(JOY_BUTTON_X) or key(KEY_V) or joy(JOY_BUTTON_Y)

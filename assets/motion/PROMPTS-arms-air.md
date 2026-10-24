@@ -1,5 +1,7 @@
 # 腕振りと空中セーバー（2026-10-24）
 
+現行の設定：銃は左手、空いている腕は右手。銃腕を両脚と胴体より先に描画し、キャラクターの最背面に置く。生成時の英語プロンプトの左右表記は生成履歴として保存。
+
 組み込みGPTImageを使用。腕分離は既存rig/body.pngを編集参照し、upper-raw.pngに保存。calibrate_hero.pyで画素を変えずにrig/torso-v2.png、gun_arm.png、free_arm.pngへ切り出し。頭の基準を維持し、肩を支点として同じ部品を回転する。
 
 空中セーバーはseed.pngを体格・顔の参照、saber-raw.pngを剣の参照にしてair-saber-raw.pngへ生成。flatten_motion.pyで3×2から横ストリップにし、sprite-pipelineのnormalize_sprite_strip.pyで6枚を共通倍率の256pxへ正規化。採用先air_saber/01.png〜06.png。calibrate_hero.pyで同じ頭基準へ倍率を合わせ、腰が物理的な足元より51px上になるようアンカーを設定。地上攻撃の途中でジャンプした場合も空中用へ切替、着地してもその一振りが終わるまでは同じアニメーションを維持。
