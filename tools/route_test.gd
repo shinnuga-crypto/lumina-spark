@@ -20,7 +20,7 @@ func press(code:int, down:bool):
 func step(target:float, jump:bool):
 	press(KEY_RIGHT,game.player.x<target-25 or (absf(game.player.x-target)<=25 and game.facing!=aim_dir and aim_dir>0))
 	press(KEY_LEFT,game.player.x>target+25 or (absf(game.player.x-target)<=25 and game.facing!=aim_dir and aim_dir<0))
-	press(KEY_X,true)
+	press(KEY_X,ticks%8<4 and not charging) # tap fire; holding now charges
 	press(KEY_V,charging)
 	press(KEY_DOWN,dropping)
 	press(KEY_SPACE,jump or (dropping and ticks%2==0))
@@ -120,7 +120,7 @@ func run():
 				press(KEY_LEFT,direction<0 and game.facing!=direction)
 				press(KEY_RIGHT,direction>0 and game.facing!=direction)
 				press(KEY_SPACE,false)
-				press(KEY_X,true)
+				press(KEY_X,ticks%8<4)
 				game.invincible=999
 				game.update_game(1.0/60)
 				ticks+=1

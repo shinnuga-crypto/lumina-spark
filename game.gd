@@ -89,7 +89,14 @@ var boss_warning = 0.0
 var shake = 0.0
 var prev_jump = false
 var prev_dash = false
-var prev_charge = false
+var prev_fire = false
+var fire_buffer = 0.0
+var energy = 100.0
+var energy_flash = 0.0
+var popups: Array[Dictionary] = []
+const ENERGY_MAX = 100.0
+const SABER_COST = 35.0
+const FULL_CHARGE = 1.6
 var music: AudioStreamPlayer
 var sfx: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -225,7 +232,10 @@ func start_game():
 	grounded = false
 	prev_jump = false
 	prev_dash = false
-	prev_charge = false
+	prev_fire = false
+	fire_buffer = 0
+	energy = ENERGY_MAX
+	popups.clear()
 	camera_x = 0
 	elapsed = 0
 	kills = 0
@@ -331,6 +341,12 @@ func update_game(dt: float):
 	if state != "play": return
 	if hitstop>0:
 		hitstop -= dt
+		# Keep presses made during the freeze so a jump or shot is not lost.
+		var held_jump = key(KEY_SPACE) or key(KEY_Z) or joy(JOY_BUTTON_A)
+		var held_fire = key(KEY_X) or key(KEY_J) or key(KEY_V) or joy(JOY_BUTTON_X) or joy(JOY_BUTTON_Y)
+		if held_jump and not prev_jump: jump_buffer = 0.12+maxf(0,hitstop)
+		if held_fire and not prev_fire: fire_buffer = 0.12+maxf(0,hitstop)
+		prev_jump = held_jump
 		return
 	saber_time = maxf(0,saber_time-dt)
 	aim_time = maxf(0,aim_time-dt)
@@ -360,20 +376,35 @@ func update_game(dt: float):
 	var dash = key(KEY_SHIFT) or key(KEY_C) or joy(JOY_BUTTON_B)
 	var saber_input = key(KEY_K) or joy(JOY_BUTTON_RIGHT_SHOULDER)
 	if saber_input and not prev_saber and saber_cooldown<=0 and dash_timer<=0 and hurt_pose<=0:
-		saber_time = 0.42
-		saber_air = not grounded
-		muzzle_time = 0
-		saber_cooldown = 0.60
-		saber_facing = facing
-		saber_hits.clear()
-		saber_boss_hit = false
-		charge = 0
-		prev_charge = false
-		sound("dash")
+		if energy>=SABER_COST:
+			energy -= SABER_COST
+			saber_time = 0.42
+			saber_air = not grounded
+			muzzle_time = 0
+			saber_cooldown = 0.75
+			saber_facing = facing
+			saber_hits.clear()
+			saber_boss_hit = false
+			charge = 0
+			sound("dash")
+		else: energy_flash = 0.5
 	prev_saber = saber_input
-	var charging = (key(KEY_V) or joy(JOY_BUTTON_Y)) and saber_time<=0
+	if saber_time<=0: energy = minf(ENERGY_MAX,energy+(16.0 if easy else 11.0)*dt)
+	energy_flash = maxf(0,energy_flash-dt)
+	# Each press fires one shot; holding the same button builds a two-stage charge.
+	var fire = (key(KEY_X) or key(KEY_J) or key(KEY_V) or joy(JOY_BUTTON_X) or joy(JOY_BUTTON_Y)) and saber_time<=0
 	var shot_request = -1
-	var fire = key(KEY_X) or key(KEY_J) or joy(JOY_BUTTON_X)
+	if fire and not prev_fire: fire_buffer = 0.12
+	fire_buffer -= dt
+	if fire_buffer>0 and shot_timer<=0:
+		shot_request = 0
+		fire_buffer = 0
+	if fire: charge = minf(FULL_CHARGE,charge+dt)
+	elif prev_fire:
+		if charge>=0.8: shot_request = 2 if charge>=FULL_CHARGE else 1
+		charge = 0
+	prev_fire = fire
+	var charging = fire and charge>=0.2
 	if jump and not prev_jump: jump_buffer = 0.12
 	if jump and not prev_jump and grounded and player.y<600 and (key(KEY_DOWN) or key(KEY_S) or joy(JOY_BUTTON_DPAD_DOWN)):
 		drop_timer = 0.25
@@ -399,15 +430,8 @@ func update_game(dt: float):
 		dash_cooldown = 0.7
 		invincible = maxf(invincible, 0.19)
 		sound("dash")
-	if charging:
-		charge = minf(1.5, charge + dt)
-	elif prev_charge:
-		shot_request = 1 if charge>=0.8 else 0
-		charge = 0
-	if fire and shot_timer<=0 and not charging: shot_request = maxi(shot_request,0)
 	prev_jump = jump
 	prev_dash = dash
-	prev_charge = charging
 	if dash_timer > 0:
 		dash_timer -= dt
 		velocity.x = facing * 720
@@ -496,7 +520,10 @@ func update_game(dt: float):
 		walk_phase = fmod(walk_phase+absf(velocity.x)*dt/13.0,8.0)
 	else: walk_phase = 0
 	if saber_time>0 and not grounded: saber_air = true
-	if shot_request>=0: shoot(shot_request==1)
+	if shot_request>=0: shoot(shot_request>=1,shot_request==2)
+	for i in range(popups.size()-1,-1,-1):
+		popups[i].age += dt
+		if popups[i].age>0.8: popups.remove_at(i)
 	update_enemies(dt)
 	update_boss(dt)
 	update_saber()
@@ -509,16 +536,31 @@ func update_game(dt: float):
 		if p.life <= 0: particles.remove_at(i)
 	camera_x = clampf(lerpf(camera_x,player.x-390,1-exp(-dt*8)),0,END_X-W)
 
-func shoot(big: bool):
+func shoot(big: bool, full = false):
 	if saber_time>0 or hurt_pose>0: return
 	aim_time = 0.25
 	muzzle_time = 0.1
-	shot_timer = 0.18
-	bullets.append({"p":muzzle_position(),"v":Vector2(facing*860,0),"enemy":false,"damage":7 if big else 2,"r":15.0 if big else 5.0,"life":1.8})
+	shot_timer = 0.14
+	# A full charge pierces every enemy in its path.
+	var damage = 12 if full else (7 if big else 2)
+	bullets.append({"p":muzzle_position(),"v":Vector2(facing*(980 if full else 860),0),"enemy":false,"damage":damage,"r":21.0 if full else (15.0 if big else 5.0),"life":1.8,"pierce":full,"hits":[]})
+	if full: shake = maxf(shake,4)
 	sound("charge" if big else "shot")
 
-func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0):
-	bullets.append({"p":pos,"v":vel,"enemy":true,"damage":1 if easy else 2,"r":radius,"life":5.0})
+# kind: "solid" cannot be cut by the saber, "home" steers toward Lumina, "bomb" falls and splits on the floor.
+func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
+	var b = {"p":pos,"v":vel,"enemy":true,"damage":1 if easy else 2,"r":radius,"life":5.0,"solid":kind in ["solid","bomb"]}
+	if kind=="home": b.home = 1.6
+	if kind=="bomb": b.bomb = true
+	bullets.append(b)
+
+func popup(pos: Vector2, text: String, color: Color):
+	popups.append({"p":pos,"text":text,"c":color,"age":0.0})
+
+func on_ground(x: float, y: float) -> bool:
+	for p in platforms:
+		if x>=p.position.x and x<=p.end.x and absf(p.position.y-y)<24: return true
+	return false
 
 func update_enemies(dt: float):
 	for e in enemies:
@@ -526,22 +568,65 @@ func update_enemies(dt: float):
 		e.t += dt
 		e.flash -= dt
 		e.shot -= dt
+		var on_screen = e.p.x>camera_x+20 and e.p.x<camera_x+W-20
+		var speed = 190.0 if easy else 250.0
+		var aim = (player+Vector2(0,-40)-e.p).normalized()
+		var mode = e.get("mode","walk")
+		e.mt = e.get("mt",0.0)-dt
+		e.cool = e.get("cool",0.0)-dt
+		# Beetles and rollers telegraph with a blink, then rush along the floor.
+		if e.kind in [0,4]:
+			if mode=="walk":
+				e.p.x = e.origin.x+sin(e.t*(1.4 if e.kind==0 else 2.5))*(75 if e.kind==0 else 95)
+				var reach = 300.0 if e.kind==0 else 520.0
+				if on_screen and e.cool<=0 and absf(player.x-e.p.x)<reach and absf(player.y-e.p.y)<80:
+					e.mode = "wind"
+					e.mt = 0.5 if e.kind==0 else 0.6
+					e.dir = 1.0 if player.x>e.p.x else -1.0
+			elif mode=="wind":
+				if int(e.mt*16)%2==0: e.flash = 0.04
+				if e.mt<=0:
+					e.mode = "rush"
+					e.mt = 0.45 if e.kind==0 else 1.1
+			elif mode=="rush":
+				var next_x = e.p.x+e.dir*(430.0 if e.kind==0 else 380.0)*dt
+				if on_ground(next_x+e.dir*20,e.p.y+10): e.p.x = next_x
+				else: e.mt = 0
+				if e.mt<=0:
+					e.mode = "walk"
+					e.cool = 2.4 if e.kind==0 else 1.6
+					e.origin.x = e.p.x-sin(e.t*(1.4 if e.kind==0 else 2.5))*(75 if e.kind==0 else 95)
 		match e.kind:
-			0: e.p.x = e.origin.x+sin(e.t*1.4)*75
 			1: e.p.y = e.origin.y+sin(e.t*2)*45
-			2: e.p.x = e.origin.x+sin(e.t)*30
-			4: e.p.x = e.origin.x+sin(e.t*2.5)*95
+			2: e.p.x = move_toward(e.p.x,clampf(player.x,e.origin.x-90,e.origin.x+90),40*dt)
 			5:
 				e.p.x = e.origin.x+sin(e.t)*85
 				e.p.y = e.origin.y+sin(e.t*2)*25
-		if e.shot<=0 and e.p.x>camera_x+20 and e.p.x<camera_x+W-20:
-			e.shot = (2.7 if easy else 1.9) if e.kind!=3 else 2.3
-			var aim = (player+Vector2(0,-40)-e.p).normalized()
-			if e.kind==5:
-				enemy_shot(e.p,Vector2(0,220),13)
-			elif e.kind==3:
-				for j in range(3): enemy_shot(e.p+Vector2(0,-18),aim.rotated((j-1)*0.14)*(190 if easy else 250),7)
-			elif e.kind!=4: enemy_shot(e.p+Vector2(0,-18),aim*(190 if easy else 250))
+		# Bursts fire the rest of a volley a few frames apart.
+		if e.get("burst",0)>0:
+			e.bt = e.get("bt",0.0)-dt
+			if e.bt<=0:
+				e.burst -= 1
+				e.bt = 0.14
+				enemy_shot(e.p+Vector2(0,-18),aim*speed*1.1)
+		if e.shot<=0 and on_screen and mode=="walk":
+			e.n = e.get("n",0)+1
+			e.shot = (2.7 if easy else 2.0) if e.kind!=3 else 2.4
+			match e.kind:
+				0: enemy_shot(e.p+Vector2(0,-18),aim*speed)
+				1:
+					if e.n%2==0: e.burst = 3
+					else: enemy_shot(e.p+Vector2(0,-18),aim*speed)
+				2:
+					# Shield bot alternates an aimed shot with a floor wave that must be jumped.
+					if e.n%2==0: enemy_shot(Vector2(e.p.x,596),Vector2(signf(player.x-e.p.x)*270,0),12,"solid")
+					else: enemy_shot(e.p+Vector2(0,-30),aim*speed)
+				3:
+					if e.n%2==0: enemy_shot(e.p+Vector2(0,-18),aim*170,10,"home")
+					else:
+						for j in range(3): enemy_shot(e.p+Vector2(0,-18),aim.rotated((j-1)*0.16)*speed,7)
+				5:
+					enemy_shot(e.p,Vector2(signf(player.x-e.p.x)*70,40),13,"bomb")
 		if (player+Vector2(0,-40)).distance_to(e.p+Vector2(0,-10))<48: hurt(1 if easy else 2)
 
 func update_boss(dt: float):
@@ -581,13 +666,20 @@ func update_boss(dt: float):
 	if boss_timer<=0:
 		boss_cycle += 1
 		boss_timer = (1.55 if boss_phase==2 else 2.0)+(0.5 if easy else 0)
-		var pattern = boss_cycle%(5 if boss_phase==2 else 3)
+		var order = [0,1,2,3,4,6] if boss_phase==2 else [0,1,2,5]
+		var pattern = order[boss_cycle%order.size()]
 		var direction = -1 if player.x<boss_pos.x else 1
 		match pattern:
 			0:
 				for j in range(7): enemy_shot(boss_pos+Vector2(0,-55),Vector2(direction,0).rotated((j-3)*0.22)*230,10)
 			1:
-				enemy_shot(Vector2(boss_pos.x,585),Vector2(direction*340,0),17)
+				enemy_shot(Vector2(boss_pos.x,585),Vector2(direction*340,0),17,"solid")
+			5:
+				# Two homing orbs from the shoulders.
+				for side in [-1,1]: enemy_shot(boss_pos+Vector2(side*60,-130),Vector2(side*120,-160),11,"home")
+			6:
+				# A ring where every other bullet is solid: cut the soft ones to open a gap.
+				for j in range(14): enemy_shot(boss_pos+Vector2(0,-70),Vector2.RIGHT.rotated(j*TAU/14+elapsed)*200,10,"solid" if j%2==0 else "")
 			2:
 				var aim = (player+Vector2(0,-40)-boss_pos).normalized()
 				for j in range(3): enemy_shot(boss_pos+Vector2(0,-60),aim.rotated((j-1)*0.24)*280,10)
@@ -607,16 +699,51 @@ func update_bullets(dt: float):
 		b.life -= dt
 		var remove = b.life <= 0 or b.p.x < camera_x - 60 or b.p.x > camera_x + W + 60
 		if b.enemy:
-			if saber_active() and saber_rect().grow(b.r).has_point(b.p):
+			if b.get("home",0.0)>0:
+				b.home -= dt
+				var want = (player+Vector2(0,-40)-b.p).normalized()*b.v.length()
+				b.v = b.v.lerp(want,minf(1,dt*2.2)).normalized()*maxf(170,b.v.length())
+			if b.get("bomb",false):
+				b.v.y += 520*dt
+				if on_ground(b.p.x,b.p.y+b.r) and b.v.y>0:
+					for side in [-1,1]: enemy_shot(Vector2(b.p.x,594),Vector2(side*210,0),7)
+					burst(b.p,Color("ffb35a"),10)
+					bullets.remove_at(i)
+					continue
+			if saber_active() and not b.get("solid",false) and saber_rect().grow(b.r).has_point(b.p):
 				parries += 1
-				burst(b.p,CYAN,8)
-				bullets.remove_at(i)
+				# The first frames of the swing reflect the shot and refund energy.
+				if saber_time>0.19:
+					b.enemy = false
+					b.v = Vector2(saber_facing*900,0)
+					b.damage = 4
+					b.life = 1.4
+					b.hits = []
+					b.erase("home")
+					energy = minf(ENERGY_MAX,energy+12)
+					burst(b.p,Color("ffe28a"),12)
+					popup(b.p,"JUST!",Color("ffe28a"))
+					hitstop = maxf(hitstop,0.03)
+					sound("charge")
+				else:
+					burst(b.p,CYAN,8)
+					bullets.remove_at(i)
 				continue
 			if Rect2(player-Vector2(21,80),Vector2(42,80)).grow(b.r).has_point(b.p):
+				# Slipping through a shot during the dash refills energy.
+				if dash_timer>0:
+					if not b.get("grazed",false):
+						b.grazed = true
+						energy = minf(ENERGY_MAX,energy+10)
+						popup(player-Vector2(0,95),"JUST DODGE  +EN",CYAN)
+					continue
 				hurt(b.damage)
 				remove = true
 		else:
-			for e in enemies:
+			var pierce = b.get("pierce",false)
+			for ei in range(enemies.size()):
+				var e = enemies[ei]
+				if pierce and ei in b.hits: continue
 				if e.hp > 0 and enemy_rect(e).grow(b.r).has_point(b.p):
 					if e.get("shield",false) and b.damage<7:
 						burst(b.p,CYAN,3)
@@ -626,7 +753,8 @@ func update_bullets(dt: float):
 					e.hp -= b.damage
 					e.flash = 0.12
 					burst(b.p,PINK,4)
-					remove = true
+					if pierce: b.hits.append(ei)
+					else: remove = true
 					if e.hp <= 0:
 						kills += 1
 						hitstop = 0.045
@@ -681,7 +809,10 @@ func respawn():
 	aim_time = 0
 	saber_cooldown = 0
 	prev_saber = false
-	prev_charge = false
+	prev_fire = false
+	fire_buffer = 0
+	energy = ENERGY_MAX
+	popups.clear()
 	walk_phase = 0
 	jumps = 0
 	dash_timer = 0
@@ -743,11 +874,12 @@ func _draw():
 		if room%4==0:
 			draw_line(Vector2(x+130,610),Vector2(x+130,390),CYAN if int(room/4)<=checkpoint else Color("466477"),3)
 			txt(Vector2(x+150,428),"RELAY %02d"%(room/4+1),18,CYAN)
-		if room < 3:
-			var tips = ["← → / A D  移動     Z / Space  ジャンプ（2回）", "X / J  長押しで連射     V  ためて離す", "Shift / C  ダッシュ・短時間無敵"]
+		if room < 4:
+			var tips = ["← → / A D  移動     Z / Space  ジャンプ（2回）", "X / J  押すたびに射撃     長押しでため撃ち（金色で貫通）", "Shift / C  ダッシュ・無敵     弾をくぐり抜けるとEN回復", "K  セーバー：ENを使って弾を消す     振り始めで当てると反射"]
 			txt(Vector2(x+100,265),tips[room],22,CYAN)
+			if room==3: txt(Vector2(x+100,235),"オレンジのトゲ弾はセーバーで消せない — 跳ぶかダッシュで避けよう",18,Color("ff9a3c"))
 		if room in [4,8,12,16,20]:
-			var tips = {4:"配電回廊：予告を見てレーザーを飛び越えよう",8:"空中搬送路：動く足場を利用しよう",12:"冷却プラント：氷の床では止まりにくい！",16:"防衛区画：Vをためて盾を壊そう",20:"コアへの道：二段ジャンプで上へ！"}
+			var tips = {4:"配電回廊：予告を見てレーザーを飛び越えよう",8:"空中搬送路：動く足場を利用しよう",12:"冷却プラント：氷の床では止まりにくい！",16:"防衛区画：X長押しのため撃ちで盾を壊そう",20:"コアへの道：二段ジャンプで上へ！"}
 			txt(Vector2(x+100,235),tips[room],20,CYAN)
 
 	for gate in gates:
@@ -784,7 +916,7 @@ func _draw():
 			else: art_sprite("enemies",e.kind-2,e.p+offset+Vector2(0,10),82,e.p.x<player.x,Color(2,2,2) if e.flash>0 else Color.WHITE)
 			if e.get("shield",false):
 				draw_arc(e.p+offset-Vector2(0,30),48,-PI/2 if e.p.x<player.x else PI/2,PI/2 if e.p.x<player.x else PI*1.5,24,Color("ffda77"),4)
-				txt(e.p+offset+Vector2(-55,-90),"V チャージで破壊",13,Color("ffda77"))
+				txt(e.p+offset+Vector2(-55,-90),"ため撃ちで破壊",13,Color("ffda77"))
 	if boss_hp>0 and player.x>BOSS_X-1000:
 		sprite(7,boss_pos+offset+Vector2(0,25),240,boss_pos.x<player.x,Color(2,1,1) if boss_flash>0 else (Color(1.4,0.75,1.25) if boss_phase==2 else Color.WHITE))
 		if boss_phase==2:
@@ -799,9 +931,24 @@ func _draw():
 			if ray.t>0.45: txt(Vector2(x-17,180),"▼",24,PINK)
 	for b in bullets:
 		if not b.enemy and b.damage>=7:
-			art_sprite("charge",int(clock*18)%6,b.p+offset+Vector2(0,28),56,b.v.x<0)
+			if b.get("pierce",false): draw_circle(b.p+offset,36,Color(1,0.85,0.45,0.25))
+			art_sprite("charge",int(clock*18)%6,b.p+offset+Vector2(0,b.r*1.9),b.r*3.7,b.v.x<0,Color(1.3,1.1,0.7) if b.get("pierce",false) else Color.WHITE)
 			continue
-		var color = PINK if b.enemy else CYAN
+		if b.enemy and b.get("solid",false):
+			# Solid shots: orange with a spiked ring, the saber cannot cut them.
+			var c = b.p+offset
+			draw_circle(c,b.r+6,Color(1,0.55,0.15,0.22))
+			var spikes = PackedVector2Array()
+			for k in range(16): spikes.append(c+Vector2.RIGHT.rotated(k*TAU/16+clock*6)*(b.r+(5 if k%2==0 else 0)))
+			draw_colored_polygon(spikes,Color("ff9a3c"))
+			draw_circle(c,b.r*0.55,Color("4a1c08"))
+			continue
+		if b.enemy and b.get("home",0.0)>0:
+			draw_circle(b.p+offset,b.r+7,Color(0.75,0.4,1,0.25))
+			draw_circle(b.p+offset,b.r,Color("c784ff"))
+			draw_circle(b.p+offset,b.r*0.45,Color.WHITE)
+			continue
+		var color = PINK if b.enemy else (Color("ffe28a") if b.damage==4 else CYAN)
 		draw_circle(b.p+offset,b.r+5,Color(color,0.16))
 		if b.enemy:
 			draw_colored_polygon(PackedVector2Array([b.p+offset+Vector2(0,-b.r),b.p+offset+Vector2(b.r,0),b.p+offset+Vector2(0,b.r),b.p+offset+Vector2(-b.r,0)]),color)
@@ -809,6 +956,8 @@ func _draw():
 		draw_circle(b.p+offset,b.r*0.45,Color.WHITE)
 	for p in particles:
 		draw_circle(p.p+offset,3,Color(p.c,clampf(p.life*2,0,1)))
+	for p in popups:
+		txt(p.p+offset+Vector2(-40,-p.age*50),p.text,18,Color(p.c,clampf(2-p.age*2.5,0,1)))
 	for effect in fx: art_sprite("explosion",mini(5,int(effect.age*12)),effect.p+offset+Vector2(0,effect.size/2),effect.size)
 	if dash_timer>0:
 		for i in range(1,4): draw_hero(player+offset-Vector2(facing*i*25,0),Color(0.4,1,1,0.35/i))
@@ -826,10 +975,12 @@ func _draw():
 		if saber_facing<0: angle = PI-angle
 		draw_arc(center,88,angle-0.45,angle+0.45,18,Color(0.4,1,0.9,0.55),4)
 	if charge>0.2:
-		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/1.5,36,CYAN if charge>=0.8 else PINK,2)
+		var full = charge>=FULL_CHARGE
+		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/FULL_CHARGE,36,Color("ffe28a") if full else (CYAN if charge>=0.8 else PINK),3 if full else 2)
+		if full: draw_circle(player+offset-Vector2(0,45),46+sin(clock*20)*3,Color(1,0.85,0.45,0.12))
 	if state=="defeat": draw_rect(Rect2(0,0,W,H),Color(1,0.9,0.95,maxf(0,1-absf(ending_time-2.0)*5)))
 	draw_hud()
-	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "K / RB：セーバー   R / Back：タイトルへ   M：音   F11：全画面")
+	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "K / RB：セーバー（EN消費・出だしで反射）   R / Back：タイトルへ   M：音")
 	if state == "dead": panel("もう一度、飛び出そう。", "Enter / クリックでチェックポイントから再開", "残機制限なし。ダッシュ中は短時間、攻撃をすり抜けます。")
 	if state == "clear":
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
@@ -860,8 +1011,8 @@ func draw_title():
 	txt(Vector2(145,504),"出撃する  /  ENTER",25,Color("102536"))
 	draw_rect(Rect2(100,542,480,44),Color("21314a"))
 	txt(Vector2(116,571),"E / Y：難易度  " + ("アシスト（体力多め・弾速ゆっくり）" if easy else "ノーマル"),18)
-	txt(Vector2(100,627),"移動：← → / A D   ジャンプ：Z / Space   射撃：X / J",18,Color("bdcbe2"))
-	txt(Vector2(100,659),"ため：V   ダッシュ：Shift / C   セーバー：K / RB   ポーズ：Esc",18,Color("bdcbe2"))
+	txt(Vector2(100,627),"移動：← → / A D   ジャンプ：Z / Space   射撃：X / J（長押しでため）",18,Color("bdcbe2"))
+	txt(Vector2(100,659),"ダッシュ：Shift / C   セーバー：K / RB（EN消費）   ポーズ：Esc",18,Color("bdcbe2"))
 	txt(Vector2(100,690),"1 STAGE / 6 SECTORS + BOSS     •     GAMEPAD対応     •     F11 全画面",14,CYAN)
 
 func time_text() -> String:
@@ -877,7 +1028,14 @@ func draw_hud():
 	draw_rect(Rect2(118,63,190,17),Color("29344b"))
 	draw_rect(Rect2(118,63,190*float(hp)/max_hp,17),CYAN)
 	txt(Vector2(340,50),sector_names[mini(6,int(player.x/(ROOM*4)))],22)
-	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + ("READY" if charge>=0.8 else "V 長押し") + "     CORE  %d / 6"%core_count,14,CYAN)
+	# Saber energy: one notch per swing.
+	var en_color = PINK if energy_flash>0 and int(clock*16)%2==0 else (Color("ffe28a") if energy>=SABER_COST else Color("8a7a52"))
+	draw_rect(Rect2(118,84,190,7),Color("29344b"))
+	draw_rect(Rect2(118,84,190*energy/ENERGY_MAX,7),en_color)
+	for k in range(1,3): draw_line(Vector2(118+190*SABER_COST*k/ENERGY_MAX,84),Vector2(118+190*SABER_COST*k/ENERGY_MAX,91),Color("0b1020"),2)
+	txt(Vector2(312,92),"EN",11,en_color)
+	var charge_text = "MAX" if charge>=FULL_CHARGE else ("READY" if charge>=0.8 else "X 長押し")
+	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + charge_text + "     SABER  " + ("OK" if energy>=SABER_COST else "EN不足") + "     CORE  %d / 6"%core_count,14,CYAN)
 	txt(Vector2(1045,50),time_text(),25)
 	txt(Vector2(1045,80),"撃破 %02d  /  M 音"%kills,15,Color("bdcbe2"))
 	draw_rect(Rect2(24,104,1232*clampf(player.x/END_X,0,1),3),PINK)
@@ -1023,7 +1181,7 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "stage", "movers", "ice", "defense", "summit", "boss", "phase2", "clear"]:
+	for scene in ["title", "stage", "movers", "ice", "defense", "summit", "boss", "phase2", "bullets", "clear"]:
 		if scene == "stage":
 			start_game()
 			player = Vector2(1500,610)
@@ -1050,6 +1208,18 @@ func capture_qa():
 			boss_timer = 0
 			update_boss(0.01)
 			banner_time = 0
+		if scene=="bullets":
+			# One of each shot type for a visual check.
+			bullets.clear()
+			boss_rays.clear()
+			enemy_shot(player+Vector2(160,-40),Vector2.LEFT,17,"solid")
+			enemy_shot(player+Vector2(260,-120),Vector2.LEFT,11,"home")
+			enemy_shot(player+Vector2(360,-60),Vector2.LEFT,10)
+			enemy_shot(player+Vector2(460,-200),Vector2.DOWN,13,"bomb")
+			shoot(true,true)
+			energy = 30
+			charge = FULL_CHARGE
+			popup(player-Vector2(0,110),"JUST!",Color("ffe28a"))
 		if scene == "clear":
 			boss_hp = 0
 			state = "clear"
@@ -1139,7 +1309,9 @@ func motion_test():
 		bullets.append({"p":front,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
 		bullets.append({"p":back,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
 		update_bullets(0)
-		if bullets.size()!=1 or bullets[0].p!=back: errors.append("directional parry")
+		var hostile = bullets.filter(func(b): return b.enemy)
+		if hostile.size()!=1 or hostile[0].p!=back: errors.append("directional parry")
+		if bullets.size()!=2 or bullets[0].enemy or bullets[0].v.x*direction<=0: errors.append("just parry reflect")
 		bullets.clear()
 	saber_time=0.06
 	if saber_active(): errors.append("saber recovery")
@@ -1168,9 +1340,58 @@ func motion_test():
 	bullets.clear()
 	bullets.append({"p":player+Vector2(70,-60),"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
 	update_bullets(0)
-	if not bullets.is_empty(): errors.append("air saber parry")
+	if not bullets.filter(func(b): return b.enemy).is_empty(): errors.append("air saber parry")
 	grounded=true
 	if hero_visual().name!="air_saber": errors.append("air swing landing continuity")
+	# Saber economy, solid shots, late parry, just dodge, tap fire and full charge.
+	saber_time=0
+	saber_cooldown=0
+	prev_saber=false
+	hurt_pose=0
+	energy=SABER_COST-1
+	test_key(KEY_K,true)
+	update_game(1.0/60)
+	test_key(KEY_K,false)
+	update_game(1.0/60)
+	if saber_time>0: errors.append("saber needs energy")
+	energy=ENERGY_MAX
+	saber_time=0.21
+	saber_facing=1
+	facing=1
+	bullets.clear()
+	enemy_shot(player+Vector2(70,-60),Vector2.ZERO,10,"solid")
+	update_bullets(0)
+	if bullets.size()!=1: errors.append("solid ignores saber")
+	bullets.clear()
+	saber_time=0.15
+	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
+	var before=energy
+	update_bullets(0)
+	if not bullets.is_empty() or energy!=before: errors.append("late parry cancels only")
+	saber_time=0
+	dash_timer=0.1
+	energy=50
+	enemy_shot(player+Vector2(0,-40),Vector2.ZERO)
+	update_bullets(0)
+	if energy!=60 or hp<=0: errors.append("just dodge energy")
+	dash_timer=0
+	bullets.clear()
+	start_game()
+	player=Vector2(180,610)
+	grounded=true
+	invincible=999
+	for tap in range(3):
+		test_key(KEY_X,true)
+		update_game(1.0/60)
+		test_key(KEY_X,false)
+		for f in range(9): update_game(1.0/60)
+	if bullets.filter(func(b): return not b.enemy).size()!=3: errors.append("tap fire")
+	bullets.clear()
+	test_key(KEY_X,true)
+	for f in range(int(FULL_CHARGE*60)+3): update_game(1.0/60)
+	test_key(KEY_X,false)
+	update_game(1.0/60)
+	if bullets.is_empty() or not bullets[-1].get("pierce",false): errors.append("full charge pierce")
 	print("MOTION TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
 	get_tree().quit(0 if errors.is_empty() else 1)
 
