@@ -6,6 +6,8 @@
 
 ## 遊び方
 
+[Windows版をダウンロード（GitHub Releases）](https://github.com/shinnuga-crypto/lumina-spark/releases/latest)
+
 **配布版は `LuminaSpark.exe` をダブルクリック**してください。画像とBGMをEXEに内蔵しており、単体で起動します。インストール・Godot・インターネット・ブラウザーは不要です。Windows 10/11 x64、OpenGL 3.3対応環境向け。Enterまたは「出撃する」で開始します。ZIP版には同じEXEと遊び方、Godotのライセンス表示を同梱します。
 
 開発フォルダーでは `起動.cmd` からも起動できます（`runtime/Godot.exe` が必要）。GitHubのソースにはGodot本体を含めません。

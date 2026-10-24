@@ -1,13 +1,13 @@
-# GitHub公開準備
+# GitHub公開記録・更新手順
 
 2026-10-24 / GPT
 
-- 指定アカウント：`shinnuga-crypto`（接続済みGitHub連携で確認）。公開リポジトリを希望。
-- 予定リポジトリ：`shinnuga-crypto/lumina-spark`。現時点はGitHub CLI未ログインのため未作成・未プッシュ。
+- 公開リポジトリ：[shinnuga-crypto/lumina-spark](https://github.com/shinnuga-crypto/lumina-spark)。mainへプッシュ済み。
+- 配布リリース：[v1.0.0](https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.0.0)。EXE・ZIP・SHA256SUMS.txtを添付済み。公開状態と全ファイルのuploaded状態・サイズをAPIで確認。EXEとZIPのGitHub側SHA-256はローカルと一致。
 - ソース：このゲームのファイルと履歴だけを `git subtree split --prefix="Projects/ゲーム/Lumina Spark" HEAD` で抽出する。親のCodexリポジトリをそのままプッシュしない。親リポジトリにリモートを追加しない。
-- 配布：`build/windows/LuminaSpark.exe`、`build/LuminaSpark-v1.0.0-windows-x64.zip`、`build/SHA256SUMS.txt` をGitHub Releasesの `v1.0.0` へ添付する。EXE/ZIPはGit履歴に入れない。
+- 配布：`build/windows/LuminaSpark.exe`、`build/LuminaSpark-v1.0.0-windows-x64.zip`、`build/SHA256SUMS.txt`。EXE/ZIPはGit履歴に入れずGitHub Releasesへ添付する。
 - リリース本文：`RELEASE_NOTES.md`。
 
-ユーザー側のPowerShellで `gh auth login` を実行し、本人のGitHubアカウントにログイン後に公開を継続する。認証コードやトークンはチャットに貼らない。
+認証は通常のGit保存済み認証（Git Credential Manager）を使用。追加の `gh auth login` は不要だった。CLIだけのログイン状態を見て作業を止めず、先に通常のGitで接続を確認する。リポジトリ作成とRelease添付では、Gitが設定済みの資格情報ヘルパーを通して取得した認証をCLIのプロセス環境内だけで使用した。認証値は表示・ファイル保存しない。
 
-公開時は既存リポジトリが同名で存在しないかを再確認し、既存内容を上書きしない。新規作成時は `--public`。ソースの抽出コミットを `main` に通常プッシュし、同じコミットを対象にリリースを作成する。完了後にリポジトリと添付ファイル名・サイズをAPIで再確認し、この文書と引き継ぎを更新する。
+更新時は公開先を再確認し、ソースの抽出コミットを `main` に通常プッシュする（強制プッシュしない）。新バージョンのReleaseを作成して配布物を添付し、ファイル名・サイズ・SHA-256をAPIで再確認する。親リポジトリにはリモートを追加していない。

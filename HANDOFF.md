@@ -1,5 +1,12 @@
 # 引き継ぎ
 
+## 2026-10-24 GPT（GitHub公開完了）
+
+- 通常のGit Credential Managerの保存済み認証で接続成功。追加の `gh auth login` は不要だった。CLIの独立した認証状態だけを見て止めない。認証を扱う補助処理はbuild内の無視対象、秘密値はプロセスメモリーだけで使用し保存・表示していない。
+- 公開リポジトリ https://github.com/shinnuga-crypto/lumina-spark を作成。ゲームだけのsubtree履歴をmainへプッシュ。親Codexの他プロジェクトやリモート設定は変更なし。
+- https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.0.0 へLuminaSpark.exe（151,676,240バイト）、ZIP（81,261,006バイト）、SHA256SUMS.txtを添付。APIでPUBLIC・main・非draft・3添付uploadedを確認。EXE/ZIPのGitHub側digestがローカルSHA-256と一致。
+- READMEにダウンロードリンク、GITHUB公開手順.mdに実際の認証方式と更新方法を反映。未完了なし。次：ユーザー試遊で調整し、変更時は再ビルド・新バージョンRelease。
+
 ## 2026-10-24 GPT（単体EXE・GitHub公開準備）
 
 - `export_presets.cfg`：Godot 4.7.2 Windows x86_64 Release、PCK内蔵、コンソールラッパー／外部ANGLE・D3D12 DLLなし。素材のJSONも明示的に同梱。`build/windows/LuminaSpark.exe`（151,676,240バイト）単体で起動可能。
