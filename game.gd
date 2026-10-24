@@ -159,6 +159,47 @@ var music_fade: Tween
 var sfx: Dictionary = {}
 var rng = RandomNumberGenerator.new()
 var sector_names = ["01  星明かりの外壁", "02  配電回廊", "03  空中搬送路", "04  冷却プラント", "05  防衛区画", "06  コアへの道", "07  星炉の守護者"]
+var stage = 1
+var selected_stage = 1
+var campaign
+var aim_direction = Vector2.RIGHT
+var aim_override = Vector2.ZERO # deterministic verification only
+var mouse_aim = false
+
+func world_camera() -> Vector2:
+	return campaign.camera if stage>1 and campaign else Vector2(camera_x,0)
+
+func update_aim():
+	var direction = Vector2.ZERO
+	if aim_override.length()>0.1:
+		direction = aim_override.normalized()
+	else:
+		var stick = Vector2(Input.get_joy_axis(0,JOY_AXIS_RIGHT_X),Input.get_joy_axis(0,JOY_AXIS_RIGHT_Y))
+		if stick.length()>0.3:
+			direction = stick.normalized()
+		elif mouse_aim and not using_pad:
+			direction = (get_global_mouse_position()+world_camera()-(player-Vector2(0,75))).normalized()
+		else:
+			var vertical = float(act("down"))-float(key(KEY_UP) or key(KEY_W) or joy(JOY_BUTTON_DPAD_UP))
+			if absf(vertical)>0.1:
+				var horizontal = float(act("right"))-float(act("left"))
+				direction = Vector2(horizontal,vertical).normalized()
+	if direction.length()>0.1:
+		aim_direction=direction
+		if absf(direction.x)>0.15 and saber_time<=0: facing=1 if direction.x>0 else -1
+	else: aim_direction=Vector2(facing,0)
+
+func complete_or_start():
+	if state=="clear" and stage==3:
+		state="title"; selected_stage=1; stage=1; music.stop()
+		return
+	if state=="clear":
+		selected_stage=stage+1 if stage<3 else 1
+	stage=selected_stage
+	start_game()
+
+func boss_hit_rect() -> Rect2:
+	return campaign.boss_rect() if stage>1 else Rect2(boss_pos-Vector2(70,160),Vector2(140,180))
 
 func _ready():
 	rng.seed = 7234
@@ -241,6 +282,7 @@ func _ready():
 	var records = ConfigFile.new()
 	if records.load(record_path)==OK: best_score=int(records.get_value("records","score",0))
 	build_level()
+	campaign=load("res://campaign.gd").new(self)
 	fixed_seed = OS.get_cmdline_user_args().size()>0
 	if "--self-test" in OS.get_cmdline_user_args():
 		muted = true
@@ -332,6 +374,7 @@ func spawn_enemy(pos: Vector2, kind: int, room: int):
 		enemies[-1].dir=-1.0
 
 func start_game():
+	if stage==1: boss_max_hp=320
 	# Tests replay the same run; normal play gets a fresh enemy arrangement every time.
 	if fixed_seed: rng.seed = run_seed
 	else: rng.randomize()
@@ -397,7 +440,10 @@ func start_game():
 	particles.clear()
 	build_level()
 	state = "play"
-	banner = "ルミナ、発進！ 星炉の暴走を止めよう。"
+	aim_direction=Vector2(facing,0)
+	mouse_aim=false
+	if stage>1: campaign.start(stage)
+	banner = "ルミナ、発進！ 星炉の暴走を止めよう。" if stage==1 else ("地上へ降下！ 上空から来る敵を迎撃しよう。" if stage==2 else "地下へ潜入。隔壁を下へ撃って降りよう。")
 	banner_time = 4
 	set_bgm("stage",true)
 
@@ -414,6 +460,7 @@ func joy_any(button: int) -> bool:
 	return joy(button)
 
 func act(name: String) -> bool:
+	if name=="fire" and (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.get_joy_axis(0,JOY_AXIS_TRIGGER_RIGHT)>0.5): return true
 	for code in key_binds[name]:
 		if key(code): return true
 	for button in pad_binds[name]:
@@ -629,6 +676,10 @@ func draw_settings():
 	else: txt(Vector2(250,H-24),"項目を決定してから、割り当てたいキーやボタンを押します。同じキーは他の操作から外れます。",15,Color("bdcbe2"))
 
 func _unhandled_input(event):
+	if event is InputEventMouseButton and event.pressed and state=="play" and event.button_index in [MOUSE_BUTTON_LEFT,MOUSE_BUTTON_RIGHT]: mouse_aim=true
+	if event is InputEventKey and event.pressed: mouse_aim=false
+	if event is InputEventKey and event.pressed and not event.echo and state=="title" and event.keycode in [KEY_1,KEY_2,KEY_3]: selected_stage=event.keycode-KEY_0
+	if event is InputEventJoypadButton and event.pressed and state=="title" and event.button_index in [JOY_BUTTON_DPAD_LEFT,JOY_BUTTON_DPAD_RIGHT]: selected_stage=wrapi(selected_stage+(-1 if event.button_index==JOY_BUTTON_DPAD_LEFT else 1),1,4)
 	if event is InputEventKey and event.pressed: using_pad = false
 	elif event is InputEventMouseButton and event.pressed: using_pad = false
 	elif event is InputEventJoypadButton and event.pressed: using_pad = true
@@ -650,7 +701,7 @@ func _unhandled_input(event):
 			if state == "play": state = "pause"
 			elif state == "pause": state = "play"
 		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
-			if state == "title" or state == "clear": start_game()
+			if state == "title" or state == "clear": complete_or_start()
 			elif state == "dead": respawn()
 			elif state == "pause": state = "play"
 		if event.keycode == KEY_E and state == "title": cycle_difficulty(1)
@@ -664,21 +715,22 @@ func _unhandled_input(event):
 			state = "title"
 			music.stop()
 		if event.button_index == JOY_BUTTON_START:
-			if state == "title" or state == "clear": start_game()
+			if state == "title" or state == "clear": complete_or_start()
 			elif state == "dead": respawn()
 			elif state == "pause": state = "play"
 			elif state == "play": state = "pause"
 		if event.button_index == JOY_BUTTON_A and state in ["title", "clear", "dead"]:
 			if state == "dead": respawn()
-			else: start_game()
+			else: complete_or_start()
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var m = get_global_mouse_position()
 		if state == "title":
-			if Rect2(100, 462, 360, 64).has_point(m): start_game()
+			if Rect2(100, 462, 360, 64).has_point(m): complete_or_start()
+			elif Rect2(100, 425, 480, 30).has_point(m): selected_stage=wrapi(selected_stage+1,1,4)
 			elif Rect2(100, 542, 480, 44).has_point(m): cycle_difficulty(1)
 			elif Rect2(100, 596, 480, 40).has_point(m): open_settings()
 		elif state == "dead": respawn()
-		elif state == "clear": start_game()
+		elif state == "clear": complete_or_start()
 		elif state == "pause": state = "play"
 
 func _notification(what):
@@ -692,6 +744,7 @@ func _physics_process(dt):
 	if state in ["play","defeat"]: update_game(dt)
 
 func update_game(dt: float):
+	update_aim()
 	# A just dodge briefly slows the whole game to half speed.
 	if state=="play" and slow_time>0:
 		slow_time -= dt
@@ -786,7 +839,7 @@ func update_game(dt: float):
 		drop_buffer = 0.12 if down else 0.0
 	drop_buffer -= dt
 	# Down + jump on a thin platform drops through it instead of jumping.
-	if drop_buffer>0 and grounded and player.y<600:
+	if drop_buffer>0 and grounded and (player.y<600 if stage==1 else campaign.can_drop()):
 		drop_timer = 0.25
 		grounded = false
 		player.y += 5
@@ -820,7 +873,7 @@ func update_game(dt: float):
 		velocity.y = 0
 		burst(player + Vector2(0,-20), CYAN, 1)
 	else:
-		var on_ice = int(player.x/ROOM)<24 and layout[int(player.x/ROOM)].ice and grounded
+		var on_ice = stage==1 and int(player.x/ROOM)<24 and layout[int(player.x/ROOM)].ice and grounded
 		# Ice barely grips and lets Lumina slide faster than she can run.
 		var move_accel = 150.0 if on_ice else (650.0 if field_area()==5 and not grounded else 2300.0)
 		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * (340.0 if on_ice else 285.0) * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), move_accel*dt)
@@ -831,11 +884,11 @@ func update_game(dt: float):
 			velocity.y=move_toward(velocity.y,800.0,2100.0*dt)
 	var old_y = player.y
 	var old_x = player.x
-	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, backtrack_limit(), END_X - 30)
+	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, backtrack_limit() if stage==1 else campaign.left_limit(), END_X - 30 if stage==1 else campaign.right_limit())
 	player.y += velocity.y * dt
 	grounded = false
 	for p in platforms:
-		if drop_timer>0 and p.size.y<30: continue
+		if drop_timer>0 and p.size.y<(30 if stage==1 else 35): continue
 		if player.x + 16 > p.position.x and player.x - 16 < p.end.x and old_y <= p.position.y + 1 and player.y >= p.position.y and velocity.y >= 0:
 			player.y = p.position.y
 			velocity.y = 0
@@ -847,7 +900,7 @@ func update_game(dt: float):
 					if platforms[m.index]==p: is_moving = true
 				if not is_moving: safe_pos = player
 	update_doors(dt,Vector2(old_x,old_y))
-	if player.y > 850:
+	if player.y > (850 if stage==1 else campaign.fall_limit()):
 		# 穴への落下は即死にせず、少し減って直前の足場へ戻る
 		falls += 1
 		invincible = 0
@@ -895,7 +948,7 @@ func update_game(dt: float):
 		if fmod(elapsed+laser.phase,3.6)>2.2 and absf(player.x-laser.x)<55 and player.y>574:
 			hurt(1 if easy else 2)
 	update_field(dt)
-	var cp = mini(6, int(player.x / (ROOM * 4)))
+	var cp = mini(6, int(player.x / (ROOM * 4))) if stage==1 else checkpoint
 	if cp > checkpoint:
 		checkpoint = cp
 		hp = max_hp
@@ -916,12 +969,15 @@ func update_game(dt: float):
 	if shot_request==0 and dodge_charge>0:
 		shot_request = 2
 		dodge_charge = 0
+	update_aim()
 	if shot_request>=0: shoot(shot_request>=1,shot_request==2)
 	for i in range(popups.size()-1,-1,-1):
 		popups[i].age += dt
 		if popups[i].age>0.8: popups.remove_at(i)
-	update_enemies(dt)
-	update_boss(dt)
+	if stage==1:
+		update_enemies(dt)
+		update_boss(dt)
+	else: campaign.update(dt)
 	update_saber()
 	update_bullets(dt)
 	for i in range(particles.size()-1,-1,-1):
@@ -930,11 +986,12 @@ func update_game(dt: float):
 		p.v.y += 200 * dt
 		p.life -= dt
 		if p.life <= 0: particles.remove_at(i)
-	camera_x = clampf(lerpf(camera_x,camera_goal(),1-exp(-dt*8)),0,END_X-W)
+	if stage==1: camera_x = clampf(lerpf(camera_x,camera_goal(),1-exp(-dt*8)),0,END_X-W)
 	update_music_state()
 
 func shoot(big: bool, full = false):
 	if saber_time>0 or hurt_pose>0: return
+	update_aim()
 	aim_time = 0.25
 	muzzle_time = 0.1
 	shot_timer = 0.14
@@ -946,7 +1003,7 @@ func shoot(big: bool, full = false):
 	for gate in gates:
 		if door_blocks_at(gate,origin.y) and gate.x>minf(player.x,origin.x) and gate.x<maxf(player.x,origin.x):
 			origin.x = gate.x-facing*(DOOR_HALF_WIDTH+radius+1)
-	bullets.append({"p":origin,"v":Vector2(facing*(980 if full else 860),0),"enemy":false,"damage":damage,"r":radius,"life":1.8,"pierce":full,"hits":[]})
+	bullets.append({"p":origin,"v":aim_direction*(980 if full else 860),"enemy":false,"damage":damage,"r":radius,"life":1.8,"pierce":full,"hits":[]})
 	if full: shake = maxf(shake,4)
 	sound("charge" if big else "shot")
 
@@ -973,6 +1030,7 @@ func add_enemy_bullet(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
 
 # Area field effects: 1 floor surge, 2 wind gusts, 3 ice (in move code), 4 searchlights, 5 low gravity.
 func field_area() -> int:
+	if stage>1: return -1
 	var area = int(player.x/(ROOM*4))
 	return area if area<6 else -1
 
@@ -1055,6 +1113,7 @@ func backtrack_limit() -> float:
 	return limit
 
 func update_doors(dt: float, previous: Vector2):
+	if stage>1: return
 	for gate in gates:
 		if gate.passed:
 			gate.lift = maxf(0,gate.lift-dt*4.0)
@@ -1305,7 +1364,8 @@ func update_bullets(dt: float):
 			bullets.remove_at(i)
 			continue
 		b.life -= dt
-		var remove = b.life <= 0 or b.p.x < camera_x - 60 or b.p.x > camera_x + W + 60
+		var cam=world_camera()
+		var remove = b.life <= 0 or b.p.x < cam.x-100 or b.p.x > cam.x+W+100 or b.p.y<cam.y-250 or b.p.y>cam.y+H+250
 		if b.enemy:
 			if b.get("home",0.0)>0:
 				b.home -= dt
@@ -1314,7 +1374,7 @@ func update_bullets(dt: float):
 			if b.get("bomb",false):
 				b.v.y += 520*dt
 				if on_ground(b.p.x,b.p.y+b.r) and b.v.y>0:
-					for side in [-1,1]: add_enemy_bullet(Vector2(b.p.x,594),Vector2(side*210,0),7)
+					for side in [-1,1]: add_enemy_bullet(b.p-Vector2(0,b.r+4),Vector2(side*210,0),7)
 					burst(b.p,Color("ffb35a"),10)
 					bullets.remove_at(i)
 					continue
@@ -1354,6 +1414,9 @@ func update_bullets(dt: float):
 				remove = true
 		else:
 			if b.get("seek",false): steer_reflection(b,dt)
+			if stage>1 and campaign.hit_device(b):
+				bullets.remove_at(i)
+				continue
 			var pierce = b.get("pierce",false)
 			for ei in range(enemies.size()):
 				var e = enemies[ei]
@@ -1374,9 +1437,10 @@ func update_bullets(dt: float):
 					if e.hp <= 0:
 						register_enemy_defeat(e)
 					break
-			if not remove and boss_active and boss_intro<=0 and boss_hp > 0 and Rect2(boss_pos-Vector2(70,160),Vector2(140,180)).grow(b.r).has_point(b.p):
-				boss_hp -= b.damage*(2 if b.get("reflected",false) else 1)
-				if b.get("reflected",false): reflection_reward(b.p)
+			if not remove and boss_active and boss_intro<=0 and boss_hp > 0 and boss_hit_rect().grow(b.r).has_point(b.p):
+				var vulnerable=stage==1 or campaign.boss_vulnerable()
+				if vulnerable: boss_hp -= b.damage*(2 if b.get("reflected",false) else 1)
+				if vulnerable and b.get("reflected",false): reflection_reward(b.p)
 				boss_flash = 0.1
 				remove = true
 				burst(b.p,PINK,6)
@@ -1409,6 +1473,9 @@ func hurt(amount: int):
 		deaths += 1
 
 func respawn():
+	if stage>1:
+		campaign.respawn()
+		return
 	player = Vector2(checkpoint*ROOM*4+130,500)
 	player.x=maxf(player.x,backtrack_limit()+60)
 	safe_pos = Vector2(player.x, 610)
@@ -1462,6 +1529,9 @@ func _draw():
 	if state == "title" or (state == "settings" and settings_from == "title"):
 		draw_title()
 		if state == "settings": draw_settings()
+		return
+	if stage>1:
+		campaign.draw()
 		return
 	var offset = Vector2(-camera_x + sin(clock*81)*shake,0)
 	for p in platforms:
@@ -1577,7 +1647,7 @@ func _draw():
 	if muzzle_time>0 and saber_time<=0:
 		var region = art.muzzle.regions[mini(5,int((0.1-muzzle_time)*60))]
 		var point = muzzle_position()+offset
-		draw_set_transform(point,0,Vector2(facing,1))
+		draw_set_transform(point,aim_direction.angle())
 		draw_texture_rect_region(art.muzzle.texture,Rect2(0,-12,24*region.size.x/region.size.y,24),region)
 		draw_set_transform(Vector2.ZERO)
 	if saber_active():
@@ -1609,7 +1679,7 @@ func _draw():
 		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else (" / 鬼弾幕" if oni else (" / 弾幕" if danmaku else ""))),14,Color("ffe28a"))
 		txt(Vector2(875,395),clear_rank(),78,Color("ffe28a"))
 		txt(Vector2(300,501),"SCORE %07d   最大コンボ %d   被ダメージ %d"%[score,max_combo,damage_taken],20,Color("ffe28a"))
-		txt(Vector2(440,525),confirm_label()+" / クリックでもう一度",24,CYAN)
+		txt(Vector2(440,525),confirm_label()+" / クリックでステージ2へ",24,CYAN)
 
 func draw_field(offset: Vector2):
 	var first_room = int(camera_x/ROOM)
@@ -1728,7 +1798,8 @@ func draw_title():
 	draw_line(Vector2(383,356),Vector2(582,356),Color(0.4,1,1,0.4),1)
 	draw_line(Vector2(383,361),Vector2(451,361),PINK,2)
 	txt(Vector2(100,407),"その一閃で、夜を撃ち抜け。",21,Color("f5d5e5"))
-	txt(Vector2(100,442),"BEST SCORE  %07d"%best_score,16,Color("ffe28a"))
+	draw_rect(Rect2(100,425,480,30),Color(0.02,0.06,0.13,0.8))
+	txt(Vector2(110,446),"STAGE %02d  "%selected_stage+["空中都市","地上・迎撃線","地下・下降施設"][selected_stage-1]+("  十字←→" if using_pad else "  [1 / 2 / 3]"),16,Color("ffe28a"))
 	var hover=Rect2(100,462,360,64).has_point(get_global_mouse_position())
 	var points=PackedVector2Array([Vector2(100,462),Vector2(442,462),Vector2(460,480),Vector2(460,526),Vector2(118,526),Vector2(100,508)])
 	draw_colored_polygon(points,Color("b3fff8") if hover else Color("6af3df"))
@@ -1746,7 +1817,7 @@ func draw_title():
 	draw_rect(Rect2(100,596,480,40),Color(0.4,0.8,0.85,0.38),false,1)
 	txt(Vector2(117,622),("BACK" if using_pad else "O")+"  設定：キー設定・音量",17,Color("edf6ff"))
 	txt(Vector2(100,662),"移動 "+move_label()+"   ジャンプ "+lbl("jump")+"   射撃 "+lbl("fire")+"   セーバー "+lbl("saber")+"   ダッシュ "+lbl("dash"),14,Color("bdcbe2"))
-	txt(Vector2(100,690),"1 STAGE / 6 SECTORS + BOSS   •   "+("コントローラー操作中" if using_pad else "キーボード操作中（パッドのボタンを押すと表示が切り替わります）"),12,Color("84d9e2"))
+	txt(Vector2(100,690),"3 STAGES   •   BEST %07d   •   360° AIM：マウス / 右スティック   •   ↑↓＋左右：8方向"%best_score,12,Color("84d9e2"))
 	txt(Vector2(1112,682),"F11 全画面",13,Color("b9d4df"))
 
 func title_txt(at: Vector2, value: String, size: int, color: Color):
@@ -1903,6 +1974,16 @@ func self_test():
 	pad.button_index=JOY_BUTTON_BACK
 	_unhandled_input(pad)
 	if state!="title": errors.append("pad return title")
+	if campaign.actor_regions.size()!=6 or campaign.backgrounds.size()!=2: errors.append("campaign images")
+	for number in [2,3]:
+		stage=number
+		start_game()
+		if enemies.size()<20 or platforms.size()<30: errors.append("campaign layout %d"%number)
+		aim_override=Vector2.UP
+		shoot(false)
+		if bullets.is_empty() or bullets[-1].v.y>=0: errors.append("campaign upward fire")
+		aim_override=Vector2.ZERO
+	stage=1; selected_stage=1; state="title"
 	print("SELF TEST: ", "PASS" if errors.is_empty() else "FAIL", " ", errors)
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -2412,6 +2493,8 @@ func hero_visual() -> Dictionary:
 		index = mini(5,int((0.42-saber_time)/0.07))
 	elif hurt_pose<=0 and dash_timer<=0 and grounded and absf(velocity.x)>15:
 		return {"name":"walk","frame":int(walk_phase)%8}
+	elif hurt_pose<=0 and saber_time<=0 and walk_aiming():
+		return {"name":"aim_rig","frame":0}
 	if name!="":
 		var meta = motion_meta[name].frames[index]
 		return {"texture":motions[name][index],"region":Rect2(0,0,256,256),"anchor":Vector2(meta.anchor[0],meta.anchor[1]),"muzzle":Vector2(meta.muzzle[0],meta.muzzle[1]),"scale":motion_meta[name].scale,"frame":index,"name":name}
@@ -2428,8 +2511,8 @@ func hero_visual() -> Dictionary:
 
 func muzzle_position() -> Vector2:
 	var visual = hero_visual()
-	if visual.name=="walk":
-		var gun = walk_arm(walk_phase,true)
+	if visual.name in ["walk","aim_rig"]:
+		var gun = walk_arm(walk_phase if visual.name=="walk" else 0.0,true)
 		return player+Vector2(gun.muzzle.x*facing,gun.muzzle.y)
 	var point = (visual.muzzle-visual.anchor)*visual.scale
 	return player+Vector2(point.x*facing,point.y)
@@ -2438,6 +2521,9 @@ func draw_hero(at: Vector2, tint = Color.WHITE):
 	var visual = hero_visual()
 	if visual.name=="walk":
 		draw_walk_rig(at,walk_phase)
+		return
+	if visual.name=="aim_rig":
+		draw_walk_rig(at,0.0)
 		return
 	draw_set_transform(at,0,Vector2(facing,1))
 	draw_texture_rect_region(visual.texture,Rect2(-visual.anchor*visual.scale,visual.region.size*visual.scale),visual.region,tint)
@@ -2491,6 +2577,11 @@ func draw_walk_rig(at: Vector2, phase: float):
 	draw_walk_arm(at,phase,true)
 	for side in ["far","near"]:
 		var leg = gait_leg(phase,side)
+		if not grounded or absf(velocity.x)<15:
+			leg.ankle=Vector2(17,-25) if side=="near" else Vector2(-17,-18)
+			if grounded: leg.ankle=Vector2(10,-10) if side=="near" else Vector2(-10,-10)
+			leg.knee=gait_knee(hip,leg.ankle)
+			leg.pitch=-0.08 if side=="near" else 0.08
 		var ankle = leg.ankle
 		var knee = leg.knee
 		draw_rig_bone(side+"_thigh",hip,knee,at)
@@ -2505,7 +2596,7 @@ func walk_lean() -> float:
 	return deg_to_rad(20)*clampf(absf(velocity.x)/180.0,0,1)
 
 func walk_aiming() -> bool:
-	return aim_time>0 or charge>0 or act("fire")
+	return aim_time>0 or charge>0 or act("fire") or mouse_aim or absf(aim_direction.y)>0.01 or aim_override.length()>0.1
 
 func walk_arm(phase: float, gun: bool) -> Dictionary:
 	var body = motion_meta.rig.body
@@ -2522,7 +2613,7 @@ func walk_arm(phase: float, gun: bool) -> Dictionary:
 	# The elbow folds the forearm up, most when the arm drives forward. The heavy cannon folds less.
 	var bend = (1.25+0.7*clampf(-swing,0,1)-0.15*clampf(swing,0,1))*(0.6 if gun else 1.0)
 	if gun and walk_aiming():
-		angle = part.aim_angle
+		angle = Vector2(aim_direction.x*facing,aim_direction.y).angle()-(tip-origin).angle()
 		bend = 0.0
 	var elbow_tex = Vector2(ARM_ELBOW[name][0],ARM_ELBOW[name][1])
 	var elbow = root+((elbow_tex-origin)*part.scale).rotated(angle)
@@ -2602,6 +2693,7 @@ func draw_rig_foot(side: String, ankle: Vector2, pitch: float, at: Vector2):
 	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2(0,top_uv),Vector2(1,top_uv),Vector2.ONE,Vector2(0,1)]),texture)
 
 func enemy_rect(enemy: Dictionary) -> Rect2:
+	if enemy.kind>=7: return Rect2(enemy.p-Vector2(38,40),Vector2(76,70))
 	if enemy.kind==6: return Rect2(enemy.p-Vector2(63,132),Vector2(126,142))
 	return Rect2(enemy.p-Vector2(35,72),Vector2(70,82))
 
@@ -2626,7 +2718,7 @@ func update_saber():
 		hitstop = 0.045
 		if enemy.hp<=0:
 			register_enemy_defeat(enemy)
-	if boss_active and boss_hp>0 and boss_intro<=0 and not saber_boss_hit and saber_rect().intersects(Rect2(boss_pos-Vector2(70,160),Vector2(140,180))):
+	if boss_active and boss_hp>0 and boss_intro<=0 and not saber_boss_hit and saber_rect().intersects(boss_hit_rect()) and (stage==1 or campaign.boss_vulnerable()):
 		saber_boss_hit = true
 		boss_hp -= 8
 		boss_flash = 0.15
@@ -2648,7 +2740,7 @@ func register_enemy_defeat(enemy: Dictionary):
 	combo=combo+1 if combo_timer>0 else 1
 	max_combo=maxi(max_combo,combo)
 	combo_timer=3.0
-	var points=int([100,150,200,200,150,200,2000][enemy.kind]*combo_multiplier())
+	var points=int(([100,150,200,200,150,200,2000][enemy.kind] if enemy.kind<7 else 200)*combo_multiplier())
 	score+=points
 	popup(enemy.p-Vector2(0,80),"+%d"%points,Color("ffe28a"))
 	hitstop=0.07 if enemy.kind==6 else 0.045
@@ -2656,7 +2748,7 @@ func register_enemy_defeat(enemy: Dictionary):
 	burst(enemy.p,Color("ffc578"),30 if enemy.kind==6 else 18)
 	if kills%4==0 or enemy.kind==6:
 		var drop=enemy.p-Vector2(0,25)
-		var floor_y=610.0
+		var floor_y=610.0 if stage!=3 else campaign.height
 		for platform in platforms:
 			if drop.x>=platform.position.x and drop.x<=platform.end.x and platform.position.y>=drop.y: floor_y=minf(floor_y,platform.position.y)
 		pickups.append(Vector2(drop.x,floor_y-30))
@@ -2670,7 +2762,8 @@ func reflection_target(from: Vector2) -> Vector2:
 	var best = Vector2.INF
 	var best_d = INF
 	for e in enemies:
-		if e.hp<=0 or e.p.x<camera_x or e.p.x>camera_x+W or door_between(from.x,e.p.x): continue
+		var cam=world_camera()
+		if e.hp<=0 or not Rect2(cam-Vector2(100,100),Vector2(W+200,H+200)).has_point(e.p) or door_between(from.x,e.p.x): continue
 		var aim = enemy_rect(e).get_center()
 		var d = from.distance_to(aim)
 		if d<best_d:

@@ -10,9 +10,10 @@ $jobs=@(
     @{Name='doors'; Args='--headless --script res://tools/door_test.gd'},
     @{Name='motion'; Args='--headless -- --motion-test'},
     @{Name='improvements'; Args='--headless --script res://tools/improvement_test.gd'},
-    @{Name='route'; Args='--headless --script res://tools/route_test.gd'}
+    @{Name='route'; Args='--headless --script res://tools/route_test.gd'},
+    @{Name='campaign'; Args='--headless --script res://tools/campaign_test.gd'}
 )
-if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}; $jobs+=@{Name='motion-capture'; Args='-- --capture-motion'}}
+if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}; $jobs+=@{Name='motion-capture'; Args='-- --capture-motion'}; $jobs+=@{Name='campaign-capture'; Args='--script res://tools/campaign_capture.gd'}}
 foreach($job in $jobs){
     $arguments='--path "'+$root+'" '+$job.Args
     $log=Join-Path $out ($job.Name+'.txt')
