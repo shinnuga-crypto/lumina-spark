@@ -65,6 +65,20 @@ func run():
 							if absf(game.player.x-target)<55 and absf(game.player.y-point[1])<12 and game.grounded: waypoint+=1
 						else: target=c.p.x
 						jump=true
+				# Doors that open by switch or by charged shots.
+				var door=game.gate_of(room)
+				var core_done=true
+				for c in game.cores:
+					if c.room==room and not c.got: core_done=false
+				if door.has("x") and not door.open and core_done:
+					if door.kind=="switch":
+						target=door.x-170
+						aim_dir=1
+						jump=true
+					elif door.kind=="break":
+						target=door.x-260
+						aim_dir=1
+						charging=t%75<58
 			var floors=game.layout[room].floor
 			if floors.size()>1:
 				var left_edge=room*1120+floors[0][0]+floors[0][1]

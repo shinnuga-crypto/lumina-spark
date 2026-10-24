@@ -97,6 +97,10 @@ var popups: Array[Dictionary] = []
 const ENERGY_MAX = 100.0
 const SABER_COST = 35.0
 const FULL_CHARGE = 1.6
+# The saber is active while saber_time is 0.07..0.28; only its first 0.05 s reflects.
+const JUST_WINDOW = 0.23
+const DOOR_KINDS = ["sync","switch","kill","break","sync","switch"]
+var alert_cool = 0.0
 var music: AudioStreamPlayer
 var sfx: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -209,7 +213,12 @@ func build_level():
 			var top = d.platforms[-1]
 			pickups.append(Vector2(x+top[0]+top[2]/2,top[1]-35))
 		if d.has("core"):
-			gates.append({"x":x+1080,"room":room,"open":false})
+			# Each area's door opens a different way so the exits do not repeat.
+			var kind = DOOR_KINDS[gates.size()%DOOR_KINDS.size()]
+			var gate = {"x":x+1080,"room":room,"open":false,"kind":kind,"lift":0.0,"hp":21,"switches":[]}
+			if kind=="switch":
+				for y in ([470,370] if room==23 else [450]): gate.switches.append({"p":Vector2(x+1058,y),"on":false})
+			gates.append(gate)
 			cores.append({"p":Vector2(x+d.core[0],d.core[1]),"room":room,"got":false,"sync":12.0,"waves":0})
 	platforms.append(Rect2(BOSS_X,610,1400,130))
 	platforms.append(Rect2(BOSS_X+260,460,180,24))
@@ -233,6 +242,7 @@ func start_game():
 	prev_jump = false
 	prev_dash = false
 	prev_fire = false
+	alert_cool = 0
 	fire_buffer = 0
 	energy = ENERGY_MAX
 	popups.clear()
@@ -389,7 +399,7 @@ func update_game(dt: float):
 			sound("dash")
 		else: energy_flash = 0.5
 	prev_saber = saber_input
-	if saber_time<=0: energy = minf(ENERGY_MAX,energy+(16.0 if easy else 11.0)*dt)
+	if saber_time<=0: energy = minf(ENERGY_MAX,energy+(9.0 if easy else 6.0)*dt)
 	energy_flash = maxf(0,energy_flash-dt)
 	# Each press fires one shot; holding the same button builds a two-stage charge.
 	var fire = (key(KEY_X) or key(KEY_J) or key(KEY_V) or joy(JOY_BUTTON_X) or joy(JOY_BUTTON_Y)) and saber_time<=0
@@ -439,10 +449,12 @@ func update_game(dt: float):
 		burst(player + Vector2(0,-20), CYAN, 1)
 	else:
 		var on_ice = int(player.x/ROOM)<24 and layout[int(player.x/ROOM)].ice and grounded
-		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * 285 * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), (430 if on_ice else 2300)*dt)
-		velocity.y = minf(900, velocity.y + 1600 * dt)
+		# Ice barely grips and lets Lumina slide faster than she can run.
+		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * (340.0 if on_ice else 285.0) * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), (150 if on_ice else 2300)*dt)
+		var low_gravity = field_area()==5
+		velocity.y = minf(560.0 if low_gravity else 900.0, velocity.y + (900.0 if low_gravity else 1600.0) * dt)
 	var old_y = player.y
-	player.x = clampf(player.x + velocity.x * dt, 24, END_X - 30)
+	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, 24, END_X - 30)
 	player.y += velocity.y * dt
 	grounded = false
 	for p in platforms:
@@ -458,19 +470,17 @@ func update_game(dt: float):
 					if platforms[m.index]==p: is_moving = true
 				if not is_moving: safe_pos = player
 	for gate in gates:
-		if not gate.open:
-			var alive = false
-			for e in enemies:
-				if e.room == gate.room and e.hp > 0: alive = true
-			var has_core = false
-			for core in cores:
-				if core.room == gate.room and core.got and core.sync<=0: has_core = true
-			if not alive and has_core:
-				gate.open = true
-				if absf(player.x - gate.x) < 1200: burst(Vector2(gate.x,500),CYAN,22)
-			elif player.x > gate.x - 25 and player.x < gate.x + 110:
-				player.x = gate.x - 25
-				velocity.x = 0
+		if gate.open:
+			gate.lift = minf(1,gate.lift+dt*1.8)
+			continue
+		if door_ready(gate):
+			gate.open = true
+			shake = maxf(shake,5)
+			sound("win" if gate.kind=="break" else "heal")
+			if absf(player.x - gate.x) < 1200: burst(Vector2(gate.x,500),CYAN,22)
+		elif player.x > gate.x - 25 and player.x < gate.x + 110:
+			player.x = gate.x - 25
+			velocity.x = 0
 	if player.y > 850:
 		# 穴への落下は即死にせず、少し減って直前の足場へ戻る
 		falls += 1
@@ -498,11 +508,27 @@ func update_game(dt: float):
 			hp = mini(max_hp,hp+3)
 			burst(core.p,Color("ffd27f"),24)
 			sound("heal")
-			banner = "スターコア回収  %d / 6  —  12秒間の同期、防衛開始！"%core_count
 			banner_time = 3
+			var door = gate_of(core.room)
+			match door.kind:
+				"sync": banner = "スターコア回収  %d / 6  —  12秒間の同期、防衛開始！"%core_count
+				"switch":
+					core.sync = 0
+					banner = "スターコア回収  %d / 6  —  扉のスイッチを撃ち抜け！"%core_count
+				"break":
+					core.sync = 0
+					banner = "スターコア回収  %d / 6  —  ため撃ちで扉を破壊しよう"%core_count
+				"kill":
+					core.sync = 0
+					var base = core.room*ROOM
+					spawn_enemy(Vector2(base+300,600),0,core.room)
+					spawn_enemy(Vector2(base+560,380),1,core.room)
+					spawn_enemy(Vector2(base+900,390),5,core.room)
+					banner = "スターコア回収  %d / 6  —  待ち伏せだ！ 全滅させて扉を開けよう"%core_count
 	for laser in lasers:
 		if fmod(elapsed+laser.phase,3.6)>2.2 and absf(player.x-laser.x)<55 and player.y>574:
 			hurt(1 if easy else 2)
+	update_field(dt)
 	var cp = mini(6, int(player.x / (ROOM * 4)))
 	if cp > checkpoint:
 		checkpoint = cp
@@ -554,6 +580,91 @@ func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
 	if kind=="bomb": b.bomb = true
 	bullets.append(b)
 
+# Area field effects: 1 floor surge, 2 wind gusts, 3 ice (in move code), 4 searchlights, 5 low gravity.
+func field_area() -> int:
+	var area = int(player.x/(ROOM*4))
+	return area if area<6 else -1
+
+func surge_phase() -> String:
+	var c = fmod(elapsed,8.0)
+	return "on" if c>=7.0 else ("warn" if c>=5.6 else "off")
+
+func wind_dir() -> float:
+	return 1.0 if int(elapsed/7.0)%2==0 else -1.0
+
+# Gusts blow for 3 s of every 7, alternating direction, strongest mid-gust.
+func wind_push() -> float:
+	if field_area()!=2: return 0.0
+	var c = fmod(elapsed,7.0)
+	if c>=3.0: return 0.0
+	return wind_dir()*sin(PI*c/3.0)*(150.0 if easy else 210.0)*(1.25 if not grounded else 1.0)
+
+func searchlight_x(room: int, k: int) -> float:
+	return room*ROOM+560+sin(elapsed*(0.7+k*0.35)+room*1.3+k*2.0)*430
+
+func update_field(dt: float):
+	alert_cool = maxf(0,alert_cool-dt)
+	match field_area():
+		1:
+			if surge_phase()=="on" and grounded and player.y>=605: hurt(1 if easy else 2)
+		2:
+			var c = fmod(elapsed,7.0)
+			if c<dt*1.5:
+				banner = "突風！  " + ("→ 右へ流される" if wind_dir()>0 else "← 左へ流される")
+				banner_time = 1.5
+		4:
+			var room = int(player.x/ROOM)
+			for k in range(2):
+				if alert_cool<=0 and absf(player.x-searchlight_x(room,k))<45:
+					alert_cool = 4.0
+					popup(player-Vector2(0,110),"発見！",Color("ffe28a"))
+					sound("hit")
+					for e in enemies:
+						if e.hp>0 and e.room==room: e.shot = minf(e.shot,rng.randf_range(0.05,0.35))
+
+func gate_of(room: int) -> Dictionary:
+	for gate in gates:
+		if gate.room==room: return gate
+	return {"kind":"sync"}
+
+func door_ready(gate: Dictionary) -> bool:
+	for core in cores:
+		if core.room==gate.room and (not core.got or core.sync>0): return false
+	if gate.kind in ["sync","kill"]:
+		for e in enemies:
+			if e.room==gate.room and e.hp>0: return false
+	if gate.kind=="break" and gate.hp>0: return false
+	for s in gate.switches:
+		if not s.on: return false
+	return true
+
+# True when a closed door stands between the two x positions.
+func door_between(a: float, b: float) -> bool:
+	for gate in gates:
+		if not gate.open and gate.x>minf(a,b) and gate.x<maxf(a,b): return true
+	return false
+
+# Lumina's shot hits a door switch or the breakable door face. Returns true when the bullet is spent.
+func hit_door_parts(b: Dictionary) -> bool:
+	for gate in gates:
+		if gate.open or absf(gate.x-b.p.x)>60: continue
+		for s in gate.switches:
+			if not s.on and Rect2(s.p-Vector2(16,24),Vector2(32,48)).grow(b.r).has_point(b.p):
+				s.on = true
+				burst(s.p,Color("ffe28a"),14)
+				popup(s.p-Vector2(0,30),"SWITCH ON",Color("ffe28a"))
+				sound("charge")
+				return true
+		if gate.kind=="break" and b.p.x>gate.x-26 and b.p.y>250:
+			if b.damage>=7:
+				gate.hp -= b.damage
+				shake = maxf(shake,4)
+				burst(b.p,Color("ffb35a"),16)
+				popup(b.p-Vector2(30,30),"CRACK!" if gate.hp>0 else "BREAK!",Color("ffb35a"))
+			else: burst(b.p,Color("9fb4c8"),3)
+			return true
+	return false
+
 func popup(pos: Vector2, text: String, color: Color):
 	popups.append({"p":pos,"text":text,"c":color,"age":0.0})
 
@@ -568,7 +679,7 @@ func update_enemies(dt: float):
 		e.t += dt
 		e.flash -= dt
 		e.shot -= dt
-		var on_screen = e.p.x>camera_x+20 and e.p.x<camera_x+W-20
+		var on_screen = e.p.x>camera_x+20 and e.p.x<camera_x+W-20 and not door_between(e.p.x,player.x)
 		var speed = 190.0 if easy else 250.0
 		var aim = (player+Vector2(0,-40)-e.p).normalized()
 		var mode = e.get("mode","walk")
@@ -590,14 +701,23 @@ func update_enemies(dt: float):
 					e.mt = 0.45 if e.kind==0 else 1.1
 			elif mode=="rush":
 				var next_x = e.p.x+e.dir*(430.0 if e.kind==0 else 380.0)*dt
-				if on_ground(next_x+e.dir*20,e.p.y+10): e.p.x = next_x
+				if on_ground(next_x+e.dir*20,e.p.y+10) and not door_between(e.p.x,next_x+e.dir*40): e.p.x = next_x
 				else: e.mt = 0
 				if e.mt<=0:
 					e.mode = "walk"
 					e.cool = 2.4 if e.kind==0 else 1.6
 					e.origin.x = e.p.x-sin(e.t*(1.4 if e.kind==0 else 2.5))*(75 if e.kind==0 else 95)
 		match e.kind:
-			1: e.p.y = e.origin.y+sin(e.t*2)*45
+			1:
+				# Drones wander between random points near home, sometimes darting fast.
+				e.gt = e.get("gt",0.0)-dt
+				if e.gt<=0 or e.p.distance_to(e.get("goal",e.p))<4:
+					e.goal = e.origin+Vector2(rng.randf_range(-170,170),rng.randf_range(-80,60))
+					var room_x = e.room*ROOM
+					e.goal.x = clampf(e.goal.x,room_x+60,room_x+1040)
+					e.dart = rng.randf()<0.3
+					e.gt = rng.randf_range(0.7,1.6)
+				e.p = e.p.move_toward(e.goal,(330.0 if e.dart else 120.0)*dt)+Vector2(0,sin(e.t*7)*0.6)
 			2: e.p.x = move_toward(e.p.x,clampf(player.x,e.origin.x-90,e.origin.x+90),40*dt)
 			5:
 				e.p.x = e.origin.x+sin(e.t)*85
@@ -695,7 +815,16 @@ func update_boss(dt: float):
 func update_bullets(dt: float):
 	for i in range(bullets.size()-1,-1,-1):
 		var b = bullets[i]
+		var old_x = b.p.x
 		b.p += b.v*dt
+		if not b.enemy and hit_door_parts(b):
+			bullets.remove_at(i)
+			continue
+		# Closed doors are solid walls: nothing crosses them.
+		if door_between(old_x-b.r*signf(b.v.x),b.p.x+b.r*signf(b.v.x)) and b.p.y>100:
+			burst(b.p,Color("9fb4c8"),3)
+			bullets.remove_at(i)
+			continue
 		b.life -= dt
 		var remove = b.life <= 0 or b.p.x < camera_x - 60 or b.p.x > camera_x + W + 60
 		if b.enemy:
@@ -713,14 +842,14 @@ func update_bullets(dt: float):
 			if saber_active() and not b.get("solid",false) and saber_rect().grow(b.r).has_point(b.p):
 				parries += 1
 				# The first frames of the swing reflect the shot and refund energy.
-				if saber_time>0.19:
+				if saber_time>JUST_WINDOW:
 					b.enemy = false
 					b.v = Vector2(saber_facing*900,0)
 					b.damage = 4
 					b.life = 1.4
 					b.hits = []
 					b.erase("home")
-					energy = minf(ENERGY_MAX,energy+12)
+					energy = minf(ENERGY_MAX,energy+8)
 					burst(b.p,Color("ffe28a"),12)
 					popup(b.p,"JUST!",Color("ffe28a"))
 					hitstop = maxf(hitstop,0.03)
@@ -734,8 +863,8 @@ func update_bullets(dt: float):
 				if dash_timer>0:
 					if not b.get("grazed",false):
 						b.grazed = true
-						energy = minf(ENERGY_MAX,energy+10)
-						popup(player-Vector2(0,95),"JUST DODGE  +EN",CYAN)
+						energy = minf(ENERGY_MAX,energy+6)
+						popup(player-Vector2(0,95),"JUST DODGE  +6",CYAN)
 					continue
 				hurt(b.damage)
 				remove = true
@@ -810,6 +939,7 @@ func respawn():
 	saber_cooldown = 0
 	prev_saber = false
 	prev_fire = false
+	alert_cool = 0
 	fire_buffer = 0
 	energy = ENERGY_MAX
 	popups.clear()
@@ -879,14 +1009,9 @@ func _draw():
 			txt(Vector2(x+100,265),tips[room],22,CYAN)
 			if room==3: txt(Vector2(x+100,235),"オレンジのトゲ弾はセーバーで消せない — 跳ぶかダッシュで避けよう",18,Color("ff9a3c"))
 		if room in [4,8,12,16,20]:
-			var tips = {4:"配電回廊：予告を見てレーザーを飛び越えよう",8:"空中搬送路：動く足場を利用しよう",12:"冷却プラント：氷の床では止まりにくい！",16:"防衛区画：X長押しのため撃ちで盾を壊そう",20:"コアへの道：二段ジャンプで上へ！"}
+			var tips = {4:"配電回廊：ときどき床に電流が走る！ 予告が出たら足場へ",8:"空中搬送路：突風が吹く — 風下の穴に注意",12:"冷却プラント：氷の床はほとんど止まれない！",16:"防衛区画：サーチライトに見つかると一斉射撃",20:"コアへの道：低重力 — 高く跳べるが落ちるのもゆっくり"}
 			txt(Vector2(x+100,235),tips[room],20,CYAN)
 
-	for gate in gates:
-		if not gate.open and absf(gate.x-player.x)<1400:
-			var x = gate.x+offset.x
-			draw_rect(Rect2(x-5,250,10,360),Color(1,0.35,0.65,0.6+sin(clock*8)*0.2))
-			txt(Vector2(x-300,235),"コアを回収・同期 ＋ 区画の敵を倒して解除",18,PINK)
 	for core in cores:
 		if core.got and core.sync>0 and absf(core.p.x-player.x)<1400:
 			var c = core.p+offset
@@ -978,6 +1103,9 @@ func _draw():
 		var full = charge>=FULL_CHARGE
 		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/FULL_CHARGE,36,Color("ffe28a") if full else (CYAN if charge>=0.8 else PINK),3 if full else 2)
 		if full: draw_circle(player+offset-Vector2(0,45),46+sin(clock*20)*3,Color(1,0.85,0.45,0.12))
+	draw_field(offset)
+	for gate in gates:
+		if gate.lift<1 and absf(gate.x-player.x)<1500: draw_door(gate,offset)
 	if state=="defeat": draw_rect(Rect2(0,0,W,H),Color(1,0.9,0.95,maxf(0,1-absf(ending_time-2.0)*5)))
 	draw_hud()
 	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "K / RB：セーバー（EN消費・出だしで反射）   R / Back：タイトルへ   M：音")
@@ -986,6 +1114,69 @@ func _draw():
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
 		art_sprite("poses",3,Vector2(1090,535),220)
 		txt(Vector2(440,525),"Enter / A / クリックでもう一度",24,CYAN)
+
+func draw_field(offset: Vector2):
+	var first_room = int(camera_x/ROOM)
+	for room in range(first_room,mini(24,first_room+3)):
+		if room<16 or room>19: continue
+		for k in range(2):
+			var lx = searchlight_x(room,k)+offset.x
+			if lx<-80 or lx>W+80: continue
+			draw_colored_polygon(PackedVector2Array([Vector2(lx-6,112),Vector2(lx+6,112),Vector2(lx+55,610),Vector2(lx-55,610)]),Color(1,0.95,0.6,0.16 if alert_cool<=0 else 0.3))
+			draw_circle(Vector2(lx,112),9,Color("ffe28a"))
+	match field_area():
+		1:
+			var phase = surge_phase()
+			if phase=="off": return
+			for p in platforms:
+				if p.size.y<30 or p.end.x<camera_x or p.position.x>camera_x+W: continue
+				var left = p.position.x+offset.x
+				if phase=="warn":
+					draw_rect(Rect2(left,600,p.size.x,10),Color(1,0.3,0.6,0.3+0.25*sin(clock*22)))
+				else:
+					draw_rect(Rect2(left,594,p.size.x,18),Color(0.6,1,1,0.35))
+					for x in range(int(left),int(left+p.size.x)-12,24):
+						var jitter = sin(clock*60+x)*5
+						draw_line(Vector2(x,606+jitter),Vector2(x+12,596-jitter),Color("e8ffff"),3)
+			if phase=="warn": txt(Vector2(W/2-150,220),"⚡ 床に電流 — 足場へ上がれ！",22,PINK)
+		2:
+			var push = wind_push()
+			if push==0: return
+			for i in range(26):
+				var x = fposmod(i*157.0+clock*1100*signf(push),W+200)-100
+				var y = 140+fmod(i*53.0,440)
+				draw_line(Vector2(x,y),Vector2(x-signf(push)*absf(push)*0.35,y),Color(0.8,0.95,1,0.35),2)
+		5:
+			for i in range(32):
+				var x = fposmod(i*97.3-camera_x*0.3,W)
+				var y = fposmod(600-clock*35-i*41,480)+120
+				draw_circle(Vector2(x,y),2,Color(0.6,1,1,0.45))
+
+# Placeholder door art (shapes only) until the GPTImage door sprites exist.
+func draw_door(gate: Dictionary, offset: Vector2):
+	var x = gate.x+offset.x
+	var fade = 1.0-gate.lift
+	# What lies past a closed door stays hidden.
+	if player.x<gate.x: draw_rect(Rect2(x+20,0,maxf(0,W-x-20),H),Color(0.01,0.015,0.04,0.97*fade))
+	var rise = gate.lift*520
+	draw_rect(Rect2(x-24,110,48,500),Color(0.07,0.1,0.17,fade))
+	draw_rect(Rect2(x-24,110,6,500),Color(0.25,0.35,0.5,fade))
+	var panel = Rect2(x-20,250-rise,40,360)
+	var cracked = gate.kind=="break" and gate.hp<21
+	draw_rect(panel,Color("3a4a66") if not cracked else Color("5a4a46"))
+	for k in range(5): draw_line(Vector2(x-20,panel.position.y+30+k*70),Vector2(x+20,panel.position.y+30+k*70),Color("22304a"),3)
+	var ready = door_ready(gate)
+	var light = CYAN if ready else (Color("ffe28a") if gate.kind=="switch" else (Color("ffb35a") if gate.kind=="break" else PINK))
+	draw_circle(Vector2(x,panel.position.y+20),7,Color(light,0.6+sin(clock*6)*0.3))
+	if gate.kind=="break":
+		for k in range(3-ceili(gate.hp/7.0)): draw_line(Vector2(x-18,panel.position.y+120+k*60),Vector2(x+16,panel.position.y+160+k*60),Color("ffb35a"),3)
+	for s in gate.switches:
+		var c = s.p+offset
+		draw_rect(Rect2(c-Vector2(14,22),Vector2(28,44)),Color("1b2234"))
+		draw_rect(Rect2(c-Vector2(9,16),Vector2(18,32)),Color("ffe28a") if s.on else Color(1,0.35,0.5,0.7+sin(clock*8)*0.3))
+	if gate.open: return
+	var hint = {"sync":"コアを同期 ＋ 区画の敵を全滅で開く","switch":"光るスイッチを撃って開ける","kill":"コア回収後の待ち伏せを全滅で開く","break":"ため撃ちで扉を破壊"}[gate.kind]
+	txt(Vector2(x-320,235),hint,18,light)
 
 func draw_background():
 	if backdrop:
@@ -1181,15 +1372,22 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "stage", "movers", "ice", "defense", "summit", "boss", "phase2", "bullets", "clear"]:
+	for scene in ["title", "stage", "surge", "door", "movers", "ice", "breakdoor", "defense", "summit", "boss", "phase2", "bullets", "clear"]:
 		if scene == "stage":
 			start_game()
 			player = Vector2(1500,610)
 			camera_x = 1100
 			grounded = true
 			banner_time = 0
+		if scene in ["surge","door","breakdoor"]:
+			var spot = {"surge":[5,300,7.4],"door":[7,560,0.0],"breakdoor":[15,560,0.0]}[scene]
+			player = Vector2(spot[0]*ROOM+spot[1],610)
+			camera_x = player.x-390
+			elapsed = spot[2]
+			charge = 0
 		if scene in ["movers","ice","defense","summit"]:
 			var room = {"movers":8,"ice":12,"defense":16,"summit":23}[scene]
+			elapsed = 1.5 if scene=="movers" else 0.0
 			player = Vector2(room*ROOM+180,610)
 			camera_x = room*ROOM
 			if scene=="defense": charge = 1.1
@@ -1303,7 +1501,7 @@ func motion_test():
 	for direction in [-1,1]:
 		facing=direction
 		saber_facing=direction
-		saber_time=0.21
+		saber_time=0.25
 		var front=player+Vector2(direction*70,-60)
 		var back=player+Vector2(-direction*70,-60)
 		bullets.append({"p":front,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
@@ -1373,7 +1571,7 @@ func motion_test():
 	energy=50
 	enemy_shot(player+Vector2(0,-40),Vector2.ZERO)
 	update_bullets(0)
-	if energy!=60 or hp<=0: errors.append("just dodge energy")
+	if energy!=56 or hp<=0: errors.append("just dodge energy")
 	dash_timer=0
 	bullets.clear()
 	start_game()
