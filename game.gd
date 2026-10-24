@@ -7,6 +7,7 @@ const BOSS_X = ROOM * 24
 const END_X = BOSS_X + 1200
 const CYAN = Color("63f4e6")
 const PINK = Color("ff82c6")
+const GAME_TITLE = "LUMINA SPARK — 星炉のリベリオン —"
 # Elbow pivot inside each arm texture (pixels); the arm is drawn as two slices around it.
 const ARM_ELBOW = {"gun_arm":[135,268],"free_arm":[118,318]}
 const ARM_OVERLAP = 22.0
@@ -54,6 +55,10 @@ var parries = 0
 var font: Font
 var atlas: Texture2D
 var backdrop: Texture2D
+var title_keyart: Texture2D
+var title_logo: Texture2D
+var title_logo_region = Rect2()
+var title_font: Font
 var regions: Array[Rect2] = []
 var platforms: Array[Rect2] = []
 var enemies: Array[Dictionary] = []
@@ -134,6 +139,16 @@ func _ready():
 	var measured = JSON.parse_string(FileAccess.get_file_as_string("res://assets/regions.json"))
 	font = SystemFont.new()
 	font.font_names = PackedStringArray(["Yu Gothic UI", "Meiryo", "sans-serif"])
+	title_font=SystemFont.new()
+	title_font.font_names=PackedStringArray(["Yu Gothic UI","Meiryo","sans-serif"])
+	title_font.font_weight=700
+	if DisplayServer.get_name()!="headless": DisplayServer.window_set_title(GAME_TITLE)
+	if ResourceLoader.exists("res://assets/title/keyart.png"):
+		title_keyart=load("res://assets/title/keyart.png")
+		title_logo=load("res://assets/title/logo.png")
+		var title_regions=JSON.parse_string(FileAccess.get_file_as_string("res://assets/title/regions.json"))
+		var r=title_regions.logo
+		title_logo_region=Rect2(r[0],r[1],r[2],r[3])
 	if ResourceLoader.exists("res://assets/atlas.png"):
 		atlas = load("res://assets/atlas.png")
 		var im = atlas.get_image()
@@ -1383,23 +1398,56 @@ func draw_background():
 		draw_circle(Vector2(x,y),1.3,Color(0.7,0.9,1,0.3+sin(clock+i)*0.15))
 
 func draw_title():
-	draw_rect(Rect2(0,0,1280,720),Color(0.025,0.035,0.09,0.48))
-	draw_circle(Vector2(950,365),230,Color(0.3,0.9,0.9,0.055))
-	draw_arc(Vector2(950,365),225,clock*0.1,clock*0.1+5,96,CYAN,2)
-	sprite(0,Vector2(950,610+sin(clock*2)*7),440)
-	txt(Vector2(100,130),"ONE GIRL. ONE SPARK. A SKY FULL OF STARS.",17,CYAN)
-	txt(Vector2(94,245),"LUMINA",82)
-	txt(Vector2(94,326),"SPARK",82,PINK)
-	txt(Vector2(100,374),"ルミナ・スパーク",26)
-	txt(Vector2(100,417),"夜空の発電都市へ。暴走した星炉を止めよう。",21,Color("bdcbe2"))
-	txt(Vector2(100,445),"BEST SCORE  %07d"%best_score,16,Color("ffe28a"))
-	draw_rect(Rect2(100,462,360,64),CYAN)
-	txt(Vector2(145,504),"出撃する  /  ENTER",25,Color("102536"))
-	draw_rect(Rect2(100,542,480,44),Color("21314a"))
-	txt(Vector2(116,571),"E / Y：難易度  " + ("アシスト（体力多め・弾速ゆっくり）" if easy else "ノーマル"),18)
-	txt(Vector2(100,627),"移動：← → / A D   ジャンプ：Z / Space   射撃：X / J（長押しでため）",18,Color("bdcbe2"))
-	txt(Vector2(100,659),"ダッシュ：Shift / C   セーバー：K / RB（EN消費）   ポーズ：Esc",18,Color("bdcbe2"))
-	txt(Vector2(100,690),"1 STAGE / 6 SECTORS + BOSS     •     GAMEPAD対応     •     F11 全画面",14,CYAN)
+	if title_keyart:
+		var source=Rect2(Vector2.ZERO,title_keyart.get_size())
+		var ratio=W/H
+		if source.size.x/source.size.y>ratio:
+			var width=source.size.y*ratio
+			source.position.x=(source.size.x-width)/2
+			source.size.x=width
+		else:
+			var height=source.size.x/ratio
+			source.position.y=(source.size.y-height)/2
+			source.size.y=height
+		draw_texture_rect_region(title_keyart,Rect2(0,0,W,H),source)
+	for x in range(0,800,8):
+		var shade=0.82*pow(1-float(x)/800,1.6)
+		draw_rect(Rect2(x,0,8,H),Color(0.018,0.028,0.06,shade))
+	for y in range(500,720,8):
+		draw_rect(Rect2(0,y,W,8),Color(0.015,0.025,0.05,0.58*pow(float(y-500)/220,1.2)))
+	for i in range(14):
+		var x=720+fmod(i*137.3+sin(clock*0.25+i)*15,530)
+		var y=fposmod(710-i*73-clock*(12+i%4*5),H)
+		draw_circle(Vector2(x,y),1.2,Color(1,0.85,0.55,0.28))
+	txt(Vector2(100,94),"THE NIGHT BELONGS TO YOUR SPARK.",14,Color("a1eef0"))
+	if title_logo:
+		var scale=minf(540/title_logo_region.size.x,205/title_logo_region.size.y)
+		var size=title_logo_region.size*scale
+		draw_texture_rect_region(title_logo,Rect2(Vector2(80,121)+(Vector2(540,205)-size)/2,size),title_logo_region)
+	title_txt(Vector2(100,367),"星炉のリベリオン",31,Color("f3f6ff"))
+	draw_line(Vector2(383,356),Vector2(582,356),Color(0.4,1,1,0.4),1)
+	draw_line(Vector2(383,361),Vector2(451,361),PINK,2)
+	txt(Vector2(100,407),"その一閃で、夜を撃ち抜け。",21,Color("f5d5e5"))
+	txt(Vector2(100,442),"BEST SCORE  %07d"%best_score,16,Color("ffe28a"))
+	var hover=Rect2(100,462,360,64).has_point(get_global_mouse_position())
+	var points=PackedVector2Array([Vector2(100,462),Vector2(442,462),Vector2(460,480),Vector2(460,526),Vector2(118,526),Vector2(100,508)])
+	draw_colored_polygon(points,Color("b3fff8") if hover else Color("6af3df"))
+	draw_polyline(PackedVector2Array([points[0],points[1],points[2],points[3],points[4],points[5],points[0]]),Color(1,1,1,0.6),1.5)
+	draw_colored_polygon(PackedVector2Array([Vector2(122,483),Vector2(122,504),Vector2(138,494)]),Color("102c36"))
+	title_txt(Vector2(156,503),"出撃する",27,Color("102c36"))
+	txt(Vector2(333,500),"ENTER / A",13,Color("102c36"))
+	draw_rect(Rect2(100,542,480,44),Color(0.03,0.07,0.13,0.86))
+	draw_rect(Rect2(100,542,480,44),Color(0.4,0.8,0.85,0.38),false,1)
+	draw_rect(Rect2(100,542,3,44),Color("ffe28a"))
+	txt(Vector2(117,570),"E / Y  難易度："+("アシスト" if easy else "ノーマル"),17,Color("edf6ff"))
+	txt(Vector2(390,570),"体力増 / 弾速低下" if easy else "基本ルール",13,Color("b2c7da"))
+	txt(Vector2(100,624),"移動 ←→ / A D    ジャンプ Z / SPACE",15,Color("bdcbe2"))
+	txt(Vector2(100,649),"射撃 X / J    セーバー K / RB    ダッシュ SHIFT",15,Color("bdcbe2"))
+	txt(Vector2(100,680),"1 STAGE / 6 SECTORS + BOSS   •   GAMEPAD",12,Color("84d9e2"))
+	txt(Vector2(1112,682),"F11 全画面",13,Color("b9d4df"))
+
+func title_txt(at: Vector2, value: String, size: int, color: Color):
+	draw_string(title_font,at,value,HORIZONTAL_ALIGNMENT_LEFT,-1,size,color)
 
 func time_text() -> String:
 	return "%02d:%02d"%[int(elapsed)/60,int(elapsed)%60]
@@ -1575,8 +1623,12 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
+	for scene in ["title", "title-assist", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
+		if scene in ["title","title-assist"]:
+			state="title"
+			easy=scene=="title-assist"
 		if scene == "stage":
+			easy=false
 			start_game()
 			player = Vector2(1500,610)
 			camera_x = 1100

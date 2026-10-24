@@ -1,6 +1,8 @@
-# ルミナ・スパーク
+# LUMINA SPARK — 星炉のリベリオン —
 
 ピンク髪の少女ルミナが、星空の発電都市を駆け抜けるオリジナル横スクロールアクション。GPTImageで主人公・敵・ボス・背景を生成した、1ステージ完結のWindowsゲームです。
+
+タイトル画面はGPTImageの専用一枚イラストと透過ロゴを使用。夜の発電都市と金色の星炉を背にしたルミナを右側へ、ロゴ・副題・出撃メニューを左側へ配置しています。タイトル専用素材と生成プロンプトは `assets/title/` に保存しています。
 
 ## 遊び方
 
@@ -57,9 +59,9 @@
 
 ## 制作・検証
 
-Godot 4.7.2 / GDScript。画像は組み込みGPTImage、BGMは上記のユーザー提供曲、効果音はオリジナルのプログラム合成です。画像のプロンプトは `assets/PROMPTS.md`、`assets/PROMPTS-v2.md`、`assets/motion/PROMPTS-rig.md`、`assets/motion/PROMPTS-arms-air.md`、`assets/improvements/PROMPTS.md` に保存しています。
+Godot 4.7.2 / GDScript。画像は組み込みGPTImage、BGMは上記のユーザー提供曲、効果音はオリジナルのプログラム合成です。画像のプロンプトは `assets/PROMPTS.md`、`assets/PROMPTS-v2.md`、`assets/motion/PROMPTS-rig.md`、`assets/motion/PROMPTS-arms-air.md`、`assets/improvements/PROMPTS.md`、`assets/title/PROMPTS.md` に保存しています。
 
-`powershell -ExecutionPolicy Bypass -File tools/verify.ps1` で読み込み・操作・壁扉・改善機能・経路検査を実行できます。`-Capture` を加えるとネイティブゲーム画面21枚とモーション・体格比較・補間確認用127枚を `test-output/` に保存します。ブラウザーは使用しません。
+`powershell -ExecutionPolicy Bypass -File tools/verify.ps1` で読み込み・操作・壁扉・改善機能・経路検査を実行できます。`-Capture` を加えるとネイティブゲーム画面22枚とモーション・体格比較・補間確認用127枚を `test-output/` に保存します。ブラウザーは使用しません。
 
 検査結果の要約は `検証結果.md`、引き継ぎは `HANDOFF.md`。描画はNVIDIA GeForce RTX 4060 / OpenGL 3.3で確認しました。人の手による難易度調整、ゲームパッド実機、別PC、音の聴感チェックは未実施です。
 
