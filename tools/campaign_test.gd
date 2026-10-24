@@ -36,6 +36,13 @@ func run():
 	g.aim_override=Vector2.ZERO; press(KEY_UP,true); press(KEY_RIGHT,true); g.update_aim()
 	check(g.aim_direction.distance_to(Vector2(1,-1).normalized())<0.01,"keyboard upward diagonal")
 	release(); press(KEY_DOWN,true); g.update_aim(); check(g.aim_direction==Vector2.DOWN,"keyboard straight down"); release()
+	g.player=Vector2(500,610); g.grounded=true; g.velocity=Vector2(285,0); g.facing=-1; g.walk_phase=3
+	g.aim_override=Vector2.LEFT; g.aim_time=0.25
+	var planted_before=g.player.x+g.gait_foot(g.walk_phase).x*g.facing
+	g.update_game(1.0/60)
+	var planted_after=g.player.x+g.gait_foot(g.walk_phase).x*g.facing
+	check(absf(planted_before-planted_after)<0.1,"backward aiming keeps stance foot planted")
+	check(g.walk_lean()<0,"backward aiming leans toward actual travel")
 	fresh(2)
 	check(g.campaign.width>10000 and g.campaign.height==720,"surface horizontal geography")
 	check(g.enemies.filter(func(e): return e.kind in [7,8,9]).size()>g.enemies.size()*0.75,"surface mostly airborne enemies")

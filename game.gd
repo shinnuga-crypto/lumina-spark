@@ -962,7 +962,7 @@ func update_game(dt: float):
 			pickups.remove_at(i)
 			sound("heal")
 	if grounded and absf(velocity.x)>15:
-		walk_phase = fmod(walk_phase+absf(velocity.x)*dt/13.0,8.0)
+		walk_phase = fposmod(walk_phase+velocity.x*facing*dt/13.0,8.0)
 	else: walk_phase = 0
 	if saber_time>0 and not grounded: saber_air = true
 	# A just dodge loads the next shot as a full charge.
@@ -2597,7 +2597,7 @@ func draw_walk_rig(at: Vector2, phase: float):
 	draw_set_transform(Vector2.ZERO)
 
 func walk_lean() -> float:
-	return deg_to_rad(20)*clampf(absf(velocity.x)/180.0,0,1)
+	return deg_to_rad(20)*clampf(velocity.x*facing/180.0,-1,1)
 
 func walk_aiming() -> bool:
 	return aim_time>0 or charge>0 or act("fire") or mouse_aim or absf(aim_direction.y)>0.01 or aim_override.length()>0.1
