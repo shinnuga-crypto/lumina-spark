@@ -40,6 +40,9 @@ func run():
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--seed="): game.run_seed=arg.trim_prefix("--seed=").to_int()
 		if arg=="--danmaku": game.danmaku=true
+		if arg=="--oni":
+			game.danmaku=true
+			game.oni=true
 	game.start_game()
 	var failures=[]
 	for room in range(24):

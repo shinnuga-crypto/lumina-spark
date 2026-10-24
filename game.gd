@@ -119,6 +119,8 @@ const FULL_CHARGE = 1.6
 const JUST_WINDOW = 0.245
 const DANMAKU_JUST_WINDOW = 0.2
 var danmaku = false
+# Oni danmaku is danmaku with ten-fold fire and saber-proof shots mixed in.
+var oni = false
 var dodge_charge = 0.0
 var slow_time = 0.0
 var slow_cool = 0.0
@@ -951,11 +953,16 @@ func shoot(big: bool, full = false):
 # kind: "solid" cannot be cut by the saber, "home" steers toward Lumina, "bomb" falls and splits on the floor.
 func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
 	if danmaku and vel.length()>1:
-		# Five times the fire, loosely scattered: floor waves at mixed speeds, everything else in a wide uneven fan.
+		# Five (oni: ten) times the fire, loosely scattered: floor waves at mixed speeds, everything else in a wide uneven fan.
 		var floor_wave = absf(vel.y)<1 and pos.y>=585
-		for k in [-2,-1,0,1,2]:
-			if floor_wave: add_enemy_bullet(pos,vel*(1.0+k*0.22+rng.randf_range(-0.08,0.08)),radius,kind)
-			else: add_enemy_bullet(pos,vel.rotated(k*0.32+rng.randf_range(-0.12,0.12))*rng.randf_range(0.8,1.15),radius,kind)
+		var count = 10 if oni else 5
+		var step = 0.2 if oni else 0.32
+		for n in range(count):
+			var k = n-(count-1)/2.0
+			# Oni mixes in orange spikes the saber cannot cut (about one in three).
+			var this_kind = "solid" if oni and kind=="" and n%3==1 else kind
+			if floor_wave: add_enemy_bullet(pos,vel*(1.0+k*(0.12 if oni else 0.22)+rng.randf_range(-0.08,0.08)),radius,this_kind)
+			else: add_enemy_bullet(pos,vel.rotated(k*step+rng.randf_range(-0.12,0.12))*rng.randf_range(0.8,1.15),radius,this_kind)
 	else: add_enemy_bullet(pos,vel,radius,kind)
 
 func add_enemy_bullet(pos: Vector2, vel: Vector2, radius = 8.0, kind = ""):
@@ -1599,7 +1606,7 @@ func _draw():
 	if state == "clear":
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
 		art_sprite("poses",3,Vector2(1090,535),220)
-		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else (" / 弾幕" if danmaku else "")),14,Color("ffe28a"))
+		txt(Vector2(835,305),"CLEAR RANK"+(" / ASSIST" if easy else (" / 鬼弾幕" if oni else (" / 弾幕" if danmaku else ""))),14,Color("ffe28a"))
 		txt(Vector2(875,395),clear_rank(),78,Color("ffe28a"))
 		txt(Vector2(300,501),"SCORE %07d   最大コンボ %d   被ダメージ %d"%[score,max_combo,damage_taken],20,Color("ffe28a"))
 		txt(Vector2(440,525),confirm_label()+" / クリックでもう一度",24,CYAN)
@@ -1732,8 +1739,8 @@ func draw_title():
 	draw_rect(Rect2(100,542,480,44),Color(0.03,0.07,0.13,0.86))
 	draw_rect(Rect2(100,542,480,44),Color(0.4,0.8,0.85,0.38),false,1)
 	draw_rect(Rect2(100,542,3,44),Color("ffe28a"))
-	txt(Vector2(117,570),("Y / 十字↑↓" if using_pad else "E")+"  難易度："+("アシスト" if easy else ("弾幕" if danmaku else "ノーマル")),17,Color("edf6ff"))
-	txt(Vector2(390,570),"体力増 / 弾速低下" if easy else ("敵弾3倍 / 連続反射" if danmaku else "基本ルール"),13,Color("b2c7da"))
+	txt(Vector2(117,570),("Y / 十字↑↓" if using_pad else "E")+"  難易度："+("アシスト" if easy else ("鬼弾幕" if oni else ("弾幕" if danmaku else "ノーマル"))),17,Color("edf6ff"))
+	txt(Vector2(390,570),"体力増 / 弾速低下" if easy else ("敵弾10倍 / 消せない弾入り" if oni else ("敵弾5倍 / 連続反射" if danmaku else "基本ルール")),13,Color("b2c7da"))
 	var settings_hover=Rect2(100,596,480,40).has_point(get_global_mouse_position())
 	draw_rect(Rect2(100,596,480,40),Color(0.06,0.14,0.22,0.92) if settings_hover else Color(0.03,0.07,0.13,0.86))
 	draw_rect(Rect2(100,596,480,40),Color(0.4,0.8,0.85,0.38),false,1)
@@ -1913,14 +1920,18 @@ func capture_qa():
 	capture_mode = true
 	set_process(false)
 	set_physics_process(false)
-	for scene in ["title", "title-assist", "title-pad", "settings", "settings-pad", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
-		if scene in ["title","title-assist"]:
+	for scene in ["title", "title-assist", "title-oni", "title-pad", "settings", "settings-pad", "stage", "surge", "door", "door-open", "door-locked", "movers", "miniboss", "miniboss-rush", "ice", "breakdoor", "defense", "summit", "low-gravity", "ceiling", "boss", "phase2", "bullets", "reflect", "combo", "clear"]:
+		if scene in ["title","title-assist","title-oni"]:
 			state="title"
 			easy=scene=="title-assist"
+			danmaku=scene=="title-oni"
+			oni=danmaku
 			using_pad=false
 		if scene in ["title-pad","settings","settings-pad"]:
 			state="title"
 			easy=false
+			danmaku=false
+			oni=false
 			using_pad=scene!="settings"
 			if scene!="title-pad":
 				open_settings()
@@ -2289,6 +2300,11 @@ func motion_test():
 	danmaku=true
 	enemy_shot(Vector2(600,400),Vector2.LEFT*200)
 	if bullets.size()!=5: errors.append("danmaku five-fold fire")
+	bullets.clear()
+	oni=true
+	enemy_shot(Vector2(600,400),Vector2.LEFT*200)
+	if bullets.size()!=10 or bullets.filter(func(b): return b.solid).size()!=3: errors.append("oni ten-fold fire with solid shots")
+	oni=false
 	bullets.clear()
 	saber_cooldown=0
 	saber_time=0
@@ -2672,10 +2688,11 @@ func steer_reflection(b: Dictionary, dt: float):
 	b.v = b.v.lerp((target-b.p).normalized()*speed,minf(1,dt*9)).normalized()*speed
 
 func cycle_difficulty(step: int):
-	var mode = (1 if easy else (2 if danmaku else 0))
-	mode = (mode+step+3)%3
+	var mode = (1 if easy else (3 if oni else (2 if danmaku else 0)))
+	mode = (mode+step+4)%4
 	easy = mode==1
-	danmaku = mode==2
+	danmaku = mode>=2
+	oni = mode==3
 
 # Dodging through fire pays back: saber and dash ready, the next shot fully charged, and a brief slow-down.
 func just_dodge_reward():
