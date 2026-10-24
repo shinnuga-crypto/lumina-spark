@@ -1279,12 +1279,14 @@ func draw_hero(at: Vector2, tint = Color.WHITE):
 # Feet stay fixed in world space during stance; the other leg swings forward.
 # The same near/far artwork keeps its identity for the entire two-step cycle.
 func gait_foot(phase: float) -> Vector2:
-	var keys = [Vector2(26,-10),Vector2(13,-10),Vector2(0,-10),Vector2(-13,-10),Vector2(-26,-10),Vector2(-24,-25),Vector2(-2,-32),Vector2(20,-24)]
+	# Swing kicks the heel up behind and stays low in front, instead of a high knee march.
+	var keys = [Vector2(26,-10),Vector2(13,-10),Vector2(0,-10),Vector2(-13,-10),Vector2(-26,-10),Vector2(-30,-22),Vector2(-6,-22),Vector2(18,-15)]
 	var index = int(floor(phase))%8
 	return keys[index].lerp(keys[(index+1)%8],fposmod(phase,1.0))
 
 func walk_hip(phase: float) -> Vector2:
-	return Vector2(0,-51+sin(phase*PI/2)*1.0)
+	# Hips sink at mid-stance and rise toward each contact for a weighted stride.
+	return Vector2(0,-51-cos(phase*PI/2)*1.5)
 
 func gait_knee(hip: Vector2, ankle: Vector2) -> Vector2:
 	var delta = ankle-hip
@@ -1382,7 +1384,7 @@ func gait_leg(phase: float, side: String) -> Dictionary:
 	var ankle = foot
 	var sole = foot.y+10
 	var local_phase = fposmod(phase+(4 if side=="far" else 0),8.0)
-	var pitches = [-0.12,0.0,0.0,0.18,0.35,0.1,-0.15,-0.15]
+	var pitches = [-0.12,0.0,0.0,0.18,0.35,0.45,0.15,-0.1]
 	var index = int(local_phase)%8
 	var pitch = lerpf(pitches[index],pitches[(index+1)%8],fposmod(local_phase,1.0))
 	var part = motion_meta.rig[side+"_boot"]
