@@ -64,7 +64,7 @@
 
 ## 制作・検証
 
-Windows単体EXEのビルド：Godot 4.7.2と同バージョンのWindows x86_64エクスポートテンプレートを用意し、`powershell -ExecutionPolicy Bypass -File tools/build-windows.ps1 -GodotExe "C:\Godot\Godot.exe"`。出力は `build/windows/LuminaSpark.exe`、配布ZIPは `build/LuminaSpark-v1.0.0-windows-x64.zip`、ハッシュは `build/SHA256SUMS.txt`。ローカルの同梱Godotを使う場合は `-GodotExe` を省略できます。PCK埋め込みと外部DLL不要の設定は `export_presets.cfg` に保存しています。[Windowsエクスポートの公式説明](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_windows.html)。
+Windows単体EXEのビルド：Godot 4.7.2と同バージョンのWindows x86_64エクスポートテンプレートを用意し、`powershell -ExecutionPolicy Bypass -File tools/build-windows.ps1 -GodotExe "C:\Godot\Godot.exe"`。出力は `build/windows/LuminaSpark.exe`、配布ZIPは `build/LuminaSpark-v1.1.0-windows-x64.zip`、ハッシュは `build/SHA256SUMS.txt`。ローカルの同梱Godotを使う場合は `-GodotExe` を省略できます。PCK埋め込みと外部DLL不要の設定は `export_presets.cfg` に保存しています。[Windowsエクスポートの公式説明](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_windows.html)。
 
 Godot 4.7.2 / GDScript。画像は組み込みGPTImage、BGMは上記のユーザー提供曲、効果音はオリジナルのプログラム合成です。画像のプロンプトは `assets/PROMPTS.md`、`assets/PROMPTS-v2.md`、`assets/motion/PROMPTS-rig.md`、`assets/motion/PROMPTS-arms-air.md`、`assets/improvements/PROMPTS.md`、`assets/title/PROMPTS.md` に保存しています。
 

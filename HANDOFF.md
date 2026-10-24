@@ -1,5 +1,13 @@
 # 引き継ぎ
 
+## 2026-10-24 Claude（v1.1.0 のEXEとRelease）
+
+- 版を1.1.0に（build-windows.ps1 の既定値、export_presets.cfg の file/product_version）。同梱の遊び方.txt をゲージ廃止・難易度4段階・設定画面に合わせて更新。RELEASE_NOTES.md を v1.1.0 に。
+- `tools/build-windows.ps1` でビルド：LuminaSpark.exe 151,692,192バイト（SHA-256 b67e11b09edaebb8880f0eccc227b6656254ead31e0e6f4d5f3d5b5ccc2e640c）、LuminaSpark-v1.1.0-windows-x64.zip 80,105,787バイト（493866364a09063c6e2d2f7500966e9b5d9b93007071c126cf3142478e3a9907）。
+- 別フォルダーへコピーしたEXE単体で SELF / MOTION PASS。
+- ソースを subtree split で main へ通常プッシュし、GitHub に v1.1.0 の Release を作成（EXE・ZIP・SHA256SUMS.txt を添付）。
+- 未確認：パッド実機・別PC・人の通しプレイ。
+
 ## 2026-10-24 Claude（鬼弾幕モード・GitHubへソースをプッシュ）
 
 - タイトルの弾幕の説明を「敵弾5倍 / 連続反射」に。難易度は ノーマル→アシスト→弾幕→鬼弾幕 の4段階（oni は danmaku も true）。
