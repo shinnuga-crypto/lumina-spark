@@ -1613,7 +1613,11 @@ func _draw():
 	for b in bullets:
 		if not b.enemy and b.damage>=7:
 			if b.get("pierce",false): draw_circle(b.p+offset,36,Color(1,0.85,0.45,0.25))
-			art_sprite("charge",int(clock*18)%6,b.p+offset+Vector2(0,b.r*1.9),b.r*3.7,b.v.x<0,Color(1.3,1.1,0.7) if b.get("pierce",false) else Color.WHITE)
+			var region=art.charge.regions[int(clock*18)%6]
+			var size=Vector2(b.r*3.7*region.size.x/region.size.y,b.r*3.7)
+			draw_set_transform(b.p+offset,b.v.angle())
+			draw_texture_rect_region(art.charge.texture,Rect2(-size/2,size),region,Color(1.3,1.1,0.7) if b.get("pierce",false) else Color.WHITE)
+			draw_set_transform(Vector2.ZERO)
 			continue
 		if b.enemy and b.get("solid",false):
 			# Solid shots: orange with a spiked ring, the saber cannot cut them.

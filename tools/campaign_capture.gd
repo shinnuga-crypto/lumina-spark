@@ -30,10 +30,11 @@ func run():
 	await snap("shaft-boss-open")
 	for stage in [1,2,3]:
 		g.state="title"; g.selected_stage=stage; await snap("title-stage%d"%stage)
-	fresh(2); g.player=Vector2(500,570); g.enemies.clear()
+	fresh(1); g.player=Vector2(500,570); g.enemies.clear()
 	for airborne in [false,true]:
 		g.grounded=not airborne
 		for i in range(8):
-			g.aim_override=Vector2.RIGHT.rotated(i*TAU/8); g.bullets.clear(); g.shoot(false)
+			g.aim_override=Vector2.RIGHT.rotated(i*TAU/8); g.bullets.clear(); g.shoot(i==7)
+			if not g.bullets.is_empty(): g.bullets[-1].p+=g.bullets[-1].v*0.13
 			await snap("aim-%s-%d"%["air" if airborne else "ground",i])
 	quit()
