@@ -1,0 +1,19 @@
+# GPTImage モーション素材
+
+組み込みGPTImageで既存主人公seed.pngを参照して生成。歩行はwalk-v2-raw.png、セーバーはsaber-raw.pngを採用。元画像は保存し、flatten_motion.pyで横ストリップ化、sprite-pipelineのnormalize_sprite_strip.pyで256px共通縮尺・足元中央に正規化。measure_motion.pyでアンカーと銃口を測定。
+
+生成プロンプト:
+
+[
+  [
+    "walk",
+    "Create a production animation spritesheet of the EXACT same adult anime girl as this approved seed. Pink bob, star hairclip, white teal armor, same facial features. EXACTLY EIGHT distinct sequential frames, FOUR equal columns by TWO equal rows, each whole body isolated in the central 70% of its square cell with transparent gutters. Every frame faces RIGHT, no direction reversal. A smooth restrained WALK cycle (NOT running) with a fixed arm cannon held horizontally aimed RIGHT, no arm swinging, head/hips/cannon same position/size except tiny natural vertical bob. Frame order left-right top-bottom: 1 left foot forward heel contact/right back toe, 2 left leg takes weight bends/right lifts, 3 right foot passes under hips/left supporting, 4 right knee swings forward/left heel lifts, 5 right foot forward heel contact/left back toe, 6 right leg takes weight bends/left lifts, 7 left foot passes under hips/right supporting, 8 left knee swings forward/right heel lifts. Make the legs clearly alternate, distinguish near/far leg through overlap and shade. Same head size, costume proportions, common baseline, no foot sliding in pose sequence. Complete looping animation 8->1. Sharp polished hand-painted 2D anime sprite art matching reference, transparent background. NO text, numbers, grid lines, scenery, motion trails, shadows or glow effects. Do not cut off cannon or feet."
+  ],
+  [
+    "saber",
+    "Create a production animation spritesheet of EXACT same adult anime girl as reference: pink bob, star hairclip, white teal armor, right arm cannon preserved. EXACTLY SIX sequential whole-body frames, THREE equal columns by TWO equal rows, each centered with 18 percent transparent gutters. Always facing RIGHT. Left hand now wields a luminous teal energy saber. One clear continuous standing sword slash toward enemies on the RIGHT. Order left-right top-bottom: 1 ready with blade drawn back/up; 2 windup torso coils blade above head; 3 overhead cut moving forward, blade points upper right; 4 active sweeping diagonal cut to lower right with a thin turquoise slash trail; 5 follow-through blade forward/down right; 6 recover to guard. Same character body size and planted foot anchor each frame, no spinning, never face left, full sword fully visible inside each cell. The right arm cannon stays around chest level pointed right when practical. Readable dynamic anime action. Genuine transparent background, no labels/grid/scenery, no unrelated objects. Keep the full body anatomically consistent with reference."
+  ]
+]
+
+歩行の左右脚修正:
+Edit this walk sheet only. Keep EXACT 4 columns x 2 rows, eight frames. KEEP character, cannon, head, torso, colors, RIGHT facing and upper row unchanged. Correct LOWER ROW (frames 5,6,7,8) to be the OPPOSITE LEG half of the walk cycle. Critical: the bright near-side leg that is forward in frame 1 must be BACK in frame 5, its bright boot far to the LEFT of the pelvis; the darker far-side leg extends FORWARD to the RIGHT in frame 5. In frame 6 the far leg supports weight, near foot lifts from rear. Frame 7 bright near foot swings forward crossing under pelvis while darker far foot supports on right. Frame 8 bright near knee rises slightly on right while dark far foot rolls off back. No high marching knee, gentle natural walking. Every sprite has SAME torso size, same hip location, same fixed horizontal arm cannon aimed right. Transparent background and wide empty gutters. No words, no scene. This is an in-place walking loop with physically alternating left and right footfalls, not the same leg twice.

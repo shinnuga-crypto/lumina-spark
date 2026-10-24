@@ -21,6 +21,16 @@ var boss_dash = 0.0
 var boss_dash_dir = -1.0
 var boss_rays: Array[Dictionary] = []
 var ending_time = 0.0
+var motions: Dictionary = {}
+var motion_meta: Dictionary = {}
+var walk_phase = 0.0
+var saber_time = 0.0
+var saber_cooldown = 0.0
+var saber_facing = 1
+var saber_hits: Array = []
+var saber_boss_hit = false
+var prev_saber = false
+var parries = 0
 var font: Font
 var atlas: Texture2D
 var backdrop: Texture2D
@@ -129,10 +139,22 @@ func _ready():
 			rects.clear()
 			for r in measured[entry[0]]: rects.append(Rect2(r[0],r[1],r[2],r[3]))
 			art[entry[0]] = {"texture":tex,"regions":rects}
+	motion_meta = JSON.parse_string(FileAccess.get_file_as_string("res://assets/motion/animation.json"))
+	for name in ["walk","saber"]:
+		var frames: Array = []
+		for entry in motion_meta[name].frames:
+			frames.append(load("res://assets/motion/"+entry.file))
+		motions[name] = frames
 	build_level()
 	if "--self-test" in OS.get_cmdline_user_args():
 		muted = true
 		call_deferred("self_test")
+	if "--motion-test" in OS.get_cmdline_user_args():
+		muted = true
+		call_deferred("motion_test")
+	if "--capture-motion" in OS.get_cmdline_user_args():
+		muted = true
+		call_deferred("capture_motion")
 	if "--capture-qa" in OS.get_cmdline_user_args():
 		muted = true
 		call_deferred("capture_qa")
@@ -212,6 +234,11 @@ func start_game():
 	hitstop = 0
 	drop_timer = 0
 	hurt_pose = 0
+	walk_phase = 0
+	saber_time = 0
+	saber_cooldown = 0
+	prev_saber = false
+	parries = 0
 	ending_time = 0
 	boss_active = false
 	boss_cycle = 0
@@ -294,6 +321,8 @@ func update_game(dt: float):
 	if hitstop>0:
 		hitstop -= dt
 		return
+	saber_time = maxf(0,saber_time-dt)
+	saber_cooldown = maxf(0,saber_cooldown-dt)
 	hurt_pose = maxf(0,hurt_pose-dt)
 	muzzle_time = maxf(0,muzzle_time-dt)
 	for m in moving:
@@ -317,7 +346,20 @@ func update_game(dt: float):
 	if joy(JOY_BUTTON_DPAD_RIGHT): axis = 1
 	var jump = key(KEY_SPACE) or key(KEY_Z) or joy(JOY_BUTTON_A)
 	var dash = key(KEY_SHIFT) or key(KEY_C) or joy(JOY_BUTTON_B)
-	var charging = key(KEY_V) or joy(JOY_BUTTON_Y)
+	var saber_input = key(KEY_K) or joy(JOY_BUTTON_RIGHT_SHOULDER)
+	if saber_input and not prev_saber and saber_cooldown<=0 and dash_timer<=0 and hurt_pose<=0:
+		saber_time = 0.42
+		muzzle_time = 0
+		saber_cooldown = 0.60
+		saber_facing = facing
+		saber_hits.clear()
+		saber_boss_hit = false
+		charge = 0
+		prev_charge = false
+		sound("dash")
+	prev_saber = saber_input
+	var charging = (key(KEY_V) or joy(JOY_BUTTON_Y)) and saber_time<=0
+	var shot_request = -1
 	var fire = key(KEY_X) or key(KEY_J) or joy(JOY_BUTTON_X)
 	if jump and not prev_jump: jump_buffer = 0.12
 	if jump and not prev_jump and grounded and player.y<600 and (key(KEY_DOWN) or key(KEY_S) or joy(JOY_BUTTON_DPAD_DOWN)):
@@ -338,8 +380,8 @@ func update_game(dt: float):
 		jump_buffer = 0
 		sound("jump")
 	if not jump and prev_jump and velocity.y < -220: velocity.y = -220
-	if axis != 0: facing = 1 if axis > 0 else -1
-	if dash and not prev_dash and dash_cooldown <= 0:
+	if axis != 0 and saber_time<=0: facing = 1 if axis > 0 else -1
+	if dash and not prev_dash and dash_cooldown <= 0 and saber_time<=0:
 		dash_timer = 0.17
 		dash_cooldown = 0.7
 		invincible = maxf(invincible, 0.19)
@@ -347,9 +389,9 @@ func update_game(dt: float):
 	if charging:
 		charge = minf(1.5, charge + dt)
 	elif prev_charge:
-		shoot(charge >= 0.8)
+		shot_request = 1 if charge>=0.8 else 0
 		charge = 0
-	if fire and shot_timer <= 0 and not charging: shoot(false)
+	if fire and shot_timer<=0 and not charging: shot_request = maxi(shot_request,0)
 	prev_jump = jump
 	prev_dash = dash
 	prev_charge = charging
@@ -360,7 +402,7 @@ func update_game(dt: float):
 		burst(player + Vector2(0,-20), CYAN, 1)
 	else:
 		var on_ice = int(player.x/ROOM)<24 and layout[int(player.x/ROOM)].ice and grounded
-		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * 285, (430 if on_ice else 2300)*dt)
+		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * 285 * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), (430 if on_ice else 2300)*dt)
 		velocity.y = minf(900, velocity.y + 1600 * dt)
 	var old_y = player.y
 	player.x = clampf(player.x + velocity.x * dt, 24, END_X - 30)
@@ -437,8 +479,13 @@ func update_game(dt: float):
 			burst(pickups[i],CYAN,14)
 			pickups.remove_at(i)
 			sound("heal")
+	if grounded and absf(velocity.x)>15:
+		walk_phase = fmod(walk_phase+dt*12.0*absf(velocity.x)/285.0,8.0)
+	else: walk_phase = 0
+	if shot_request>=0: shoot(shot_request==1)
 	update_enemies(dt)
 	update_boss(dt)
+	update_saber()
 	update_bullets(dt)
 	for i in range(particles.size()-1,-1,-1):
 		var p = particles[i]
@@ -449,9 +496,10 @@ func update_game(dt: float):
 	camera_x = clampf(lerpf(camera_x,player.x-390,1-exp(-dt*8)),0,END_X-W)
 
 func shoot(big: bool):
+	if saber_time>0 or hurt_pose>0: return
 	muzzle_time = 0.1
 	shot_timer = 0.18
-	bullets.append({"p":player+Vector2(facing*43,-60),"v":Vector2(facing*860,0),"enemy":false,"damage":7 if big else 2,"r":15.0 if big else 5.0,"life":1.8})
+	bullets.append({"p":muzzle_position(),"v":Vector2(facing*860,0),"enemy":false,"damage":7 if big else 2,"r":15.0 if big else 5.0,"life":1.8})
 	sound("charge" if big else "shot")
 
 func enemy_shot(pos: Vector2, vel: Vector2, radius = 8.0):
@@ -544,12 +592,17 @@ func update_bullets(dt: float):
 		b.life -= dt
 		var remove = b.life <= 0 or b.p.x < camera_x - 60 or b.p.x > camera_x + W + 60
 		if b.enemy:
+			if saber_active() and saber_rect().grow(b.r).has_point(b.p):
+				parries += 1
+				burst(b.p,CYAN,8)
+				bullets.remove_at(i)
+				continue
 			if Rect2(player-Vector2(21,80),Vector2(42,80)).grow(b.r).has_point(b.p):
 				hurt(b.damage)
 				remove = true
 		else:
 			for e in enemies:
-				if e.hp > 0 and Rect2(e.p-Vector2(28,48),Vector2(56,58)).grow(b.r).has_point(b.p):
+				if e.hp > 0 and enemy_rect(e).grow(b.r).has_point(b.p):
 					if e.get("shield",false) and b.damage<7:
 						burst(b.p,CYAN,3)
 						remove = true
@@ -591,6 +644,7 @@ func hurt(amount: int):
 	invincible = 1.3
 	shake = 8
 	hurt_pose = 0.24
+	saber_time = 0
 	velocity = Vector2(-facing*250,-180)
 	dash_timer = 0
 	sound("hit")
@@ -607,6 +661,11 @@ func respawn():
 	invincible = 2
 	bullets.clear()
 	charge = 0
+	saber_time = 0
+	saber_cooldown = 0
+	prev_saber = false
+	prev_charge = false
+	walk_phase = 0
 	jumps = 0
 	dash_timer = 0
 	camera_x = clampf(player.x-390,0,END_X-W)
@@ -736,20 +795,24 @@ func _draw():
 	for effect in fx: art_sprite("explosion",mini(5,int(effect.age*12)),effect.p+offset+Vector2(0,effect.size/2),effect.size)
 	if dash_timer>0:
 		for i in range(1,4): art_sprite("poses",0,player+offset-Vector2(facing*i*25,0),104,facing<0,Color(0.4,1,1,0.35/i))
-	if invincible<=0 or int(clock*18)%2==0:
-		var frame = 0
-		if not grounded: frame = 3
-		elif absf(velocity.x)>30: frame = 1+int(clock*12)%2
-		if hurt_pose>0: art_sprite("poses",1,player+offset,104,facing<0)
-		elif dash_timer>0: art_sprite("poses",0,player+offset,104,facing<0)
-		elif charge>0.3: art_sprite("poses",2,player+offset,104,facing<0)
-		else: sprite(frame,player+offset,104,facing<0)
-	if muzzle_time>0: art_sprite("muzzle",mini(5,int((0.1-muzzle_time)*60)),player+offset+Vector2(facing*53,-36),50,facing<0)
+	if invincible<=0 or int(clock*18)%2==0: draw_hero(player+offset)
+	if muzzle_time>0 and saber_time<=0:
+		var region = art.muzzle.regions[mini(5,int((0.1-muzzle_time)*60))]
+		var point = muzzle_position()+offset
+		draw_set_transform(point,0,Vector2(facing,1))
+		draw_texture_rect_region(art.muzzle.texture,Rect2(0,-12,24*region.size.x/region.size.y,24),region)
+		draw_set_transform(Vector2.ZERO)
+	if saber_active():
+		var center = player+offset-Vector2(0,45)
+		var progress = (0.42-saber_time-0.14)/0.21
+		var angle = -1.15+2.2*progress
+		if saber_facing<0: angle = PI-angle
+		draw_arc(center,88,angle-0.45,angle+0.45,18,Color(0.4,1,0.9,0.55),4)
 	if charge>0.2:
-		draw_arc(player+offset-Vector2(0,37),35+charge*8,clock*5,clock*5+TAU*charge/1.5,36,CYAN if charge>=0.8 else PINK,3)
+		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/1.5,36,CYAN if charge>=0.8 else PINK,2)
 	if state=="defeat": draw_rect(Rect2(0,0,W,H),Color(1,0.9,0.95,maxf(0,1-absf(ending_time-2.0)*5)))
 	draw_hud()
-	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "R / パッドBack：タイトルへ   M：音   F11：全画面")
+	if state == "pause": panel("一時停止", "Enter / Esc / クリックで再開", "K / RB：セーバー   R / Back：タイトルへ   M：音   F11：全画面")
 	if state == "dead": panel("もう一度、飛び出そう。", "Enter / クリックでチェックポイントから再開", "残機制限なし。ダッシュ中は短時間、攻撃をすり抜けます。")
 	if state == "clear":
 		panel("STAGE CLEAR", "星炉は、もう一度輝きはじめた。", "ルミナ、おかえり！   時間 %s   撃破 %d   リトライ %d"%[time_text(),kills,deaths])
@@ -781,7 +844,7 @@ func draw_title():
 	draw_rect(Rect2(100,542,480,44),Color("21314a"))
 	txt(Vector2(116,571),"E / Y：難易度  " + ("アシスト（体力多め・弾速ゆっくり）" if easy else "ノーマル"),18)
 	txt(Vector2(100,627),"移動：← → / A D   ジャンプ：Z / Space   射撃：X / J",18,Color("bdcbe2"))
-	txt(Vector2(100,659),"チャージ：V   ダッシュ：Shift / C   ポーズ：Esc   音：M",18,Color("bdcbe2"))
+	txt(Vector2(100,659),"ため：V   ダッシュ：Shift / C   セーバー：K / RB   ポーズ：Esc",18,Color("bdcbe2"))
 	txt(Vector2(100,690),"1 STAGE / 6 SECTORS + BOSS     •     GAMEPAD対応     •     F11 全画面",14,CYAN)
 
 func time_text() -> String:
@@ -993,3 +1056,155 @@ func update_fx(dt: float):
 	for i in range(fx.size()-1,-1,-1):
 		fx[i].age += dt
 		if fx[i].age>=0.5: fx.remove_at(i)
+
+# One pose descriptor drives drawing, cannon socket, and muzzle flash.
+func motion_test():
+	set_process(false)
+	set_physics_process(false)
+	start_game()
+	var errors = []
+	if motions.walk.size()!=8 or motions.saber.size()!=6: errors.append("frame counts")
+	player = Vector2(180,610)
+	grounded = true
+	velocity = Vector2(285,0)
+	for direction in [-1,1]:
+		facing = direction
+		for frame in range(8):
+			walk_phase = frame
+			bullets.clear()
+			shoot(false)
+			if bullets.is_empty() or bullets[-1].p.distance_to(muzzle_position())>0.01: errors.append("muzzle socket")
+			if (muzzle_position().x-player.x)*direction<20: errors.append("muzzle facing")
+	test_key(KEY_RIGHT,true)
+	test_key(KEY_V,true)
+	for i in range(20): update_game(1.0/60)
+	if absf(velocity.x-156.75)>1 or hero_visual().name!="walk": errors.append("slow charge walk")
+	test_key(KEY_RIGHT,false)
+	test_key(KEY_V,false)
+	update_game(1.0/60)
+	test_key(KEY_K,true)
+	update_game(1.0/60)
+	if saber_time<=0 or saber_active(): errors.append("saber input startup")
+	test_key(KEY_K,false)
+	bullets.clear()
+	for direction in [-1,1]:
+		facing=direction
+		saber_facing=direction
+		saber_time=0.21
+		var front=player+Vector2(direction*70,-60)
+		var back=player+Vector2(-direction*70,-60)
+		bullets.append({"p":front,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
+		bullets.append({"p":back,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
+		update_bullets(0)
+		if bullets.size()!=1 or bullets[0].p!=back: errors.append("directional parry")
+		bullets.clear()
+	saber_time=0.06
+	if saber_active(): errors.append("saber recovery")
+	saber_time=0.21
+	facing=1
+	saber_facing=1
+	enemies.clear()
+	spawn_enemy(player+Vector2(80,0),0,0)
+	enemies[0].hp=20
+	saber_hits.clear()
+	update_saber()
+	update_saber()
+	if enemies[0].hp!=14: errors.append("one hit per swing")
+	print("MOTION TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
+	get_tree().quit(0 if errors.is_empty() else 1)
+
+func capture_motion():
+	set_process(false)
+	set_physics_process(false)
+	start_game()
+	player=Vector2(480,610)
+	camera_x=0
+	grounded=true
+	banner_time=0
+	for action in ["walk","charge","saber","left"]:
+		for frame in range(8 if action in ["walk","charge"] else 6):
+			facing=-1 if action=="left" else 1
+			saber_facing=facing
+			velocity=Vector2(156.75 if action=="charge" else 285,0)
+			walk_phase=frame
+			charge=1.0 if action=="charge" else 0.0
+			saber_time=0.42-frame*0.07-0.001 if action in ["saber","left"] else 0.0
+			bullets.clear()
+			if action in ["walk","charge"]:
+				shoot(action=="charge")
+			queue_redraw()
+			await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("res://test-output/motion-"+action+str(frame)+".png")
+	print("MOTION CAPTURE: PASS 28 frames")
+	get_tree().quit()
+
+func hero_visual() -> Dictionary:
+	var name = ""
+	var index = 0
+	if hurt_pose<=0 and saber_time>0:
+		name = "saber"
+		index = mini(5,int((0.42-saber_time)/0.07))
+	elif hurt_pose<=0 and dash_timer<=0 and grounded and absf(velocity.x)>15:
+		name = "walk"
+		index = int(walk_phase)%8
+	if name!="":
+		var meta = motion_meta[name].frames[index]
+		return {"texture":motions[name][index],"region":Rect2(0,0,256,256),"anchor":Vector2(meta.anchor[0],meta.anchor[1]),"muzzle":Vector2(meta.muzzle[0],meta.muzzle[1]),"scale":motion_meta[name].scale,"frame":index,"name":name}
+	var tex = atlas
+	var region = regions[0]
+	var pose = "idle"
+	if hurt_pose>0: pose="hurt"; tex=art.poses.texture; region=art.poses.regions[1]
+	elif dash_timer>0: pose="dash"; tex=art.poses.texture; region=art.poses.regions[0]
+	elif not grounded: pose="jump"; region=regions[3]
+	elif charge>0.3: pose="charge"; tex=art.poses.texture; region=art.poses.regions[2]
+	var socket = motion_meta.legacy[pose]
+	return {"texture":tex,"region":region,"anchor":Vector2(region.size.x/2,region.size.y),"muzzle":Vector2(socket[0],socket[1])-region.position,"scale":104.0/region.size.y,"name":pose,"frame":0}
+
+func muzzle_position() -> Vector2:
+	var visual = hero_visual()
+	var point = (visual.muzzle-visual.anchor)*visual.scale
+	return player+Vector2(point.x*facing,point.y)
+
+func draw_hero(at: Vector2):
+	var visual = hero_visual()
+	draw_set_transform(at,0,Vector2(facing,1))
+	draw_texture_rect_region(visual.texture,Rect2(-visual.anchor*visual.scale,visual.region.size*visual.scale),visual.region)
+	draw_set_transform(Vector2.ZERO)
+
+func enemy_rect(enemy: Dictionary) -> Rect2:
+	return Rect2(enemy.p-Vector2(35,72),Vector2(70,82))
+
+func saber_active() -> bool:
+	return state=="play" and saber_time>0.07 and saber_time<=0.28 and hurt_pose<=0
+
+func saber_rect() -> Rect2:
+	return Rect2(player+Vector2(0 if saber_facing>0 else -100,-112),Vector2(100,122))
+
+func update_saber():
+	if not saber_active(): return
+	for i in range(enemies.size()):
+		var enemy = enemies[i]
+		if enemy.hp<=0 or i in saber_hits or not saber_rect().intersects(enemy_rect(enemy)): continue
+		saber_hits.append(i)
+		if enemy.get("shield",false):
+			burst(enemy.p,CYAN,5)
+			continue
+		enemy.hp -= 6
+		enemy.flash = 0.15
+		burst(enemy.p,CYAN,12)
+		hitstop = 0.045
+		if enemy.hp<=0:
+			kills += 1
+			fx.append({"p":enemy.p-Vector2(0,20),"age":0.0,"size":100.0})
+	if boss_active and boss_hp>0 and boss_intro<=0 and not saber_boss_hit and saber_rect().intersects(Rect2(boss_pos-Vector2(70,160),Vector2(140,180))):
+		saber_boss_hit = true
+		boss_hp -= 8
+		boss_flash = 0.15
+		hitstop = 0.045
+		if boss_hp<=0:
+			state="defeat"
+			ending_time=0
+			boss_rays.clear()
+			music.stop()
+			shake=15

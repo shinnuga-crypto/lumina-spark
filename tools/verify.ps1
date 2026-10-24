@@ -7,9 +7,10 @@ New-Item -ItemType Directory -Force $out,$env:APPDATA | Out-Null
 $jobs=@(
     @{Name='import'; Args='--headless --editor --import --quit'},
     @{Name='self-test'; Args='--headless -- --self-test'},
+    @{Name='motion'; Args='--headless -- --motion-test'},
     @{Name='route'; Args='--headless --script res://tools/route_test.gd'}
 )
-if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}}
+if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}; $jobs+=@{Name='motion-capture'; Args='-- --capture-motion'}}
 foreach($job in $jobs){
     $arguments='--path "'+$root+'" '+$job.Args
     $log=Join-Path $out ($job.Name+'.txt')
