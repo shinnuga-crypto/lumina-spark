@@ -27,6 +27,8 @@ var rig_textures: Dictionary = {}
 var capture_mode = false
 var walk_phase = 0.0
 var saber_time = 0.0
+var saber_air = false
+var aim_time = 0.0
 var saber_cooldown = 0.0
 var saber_facing = 1
 var saber_hits: Array = []
@@ -142,7 +144,7 @@ func _ready():
 			for r in measured[entry[0]]: rects.append(Rect2(r[0],r[1],r[2],r[3]))
 			art[entry[0]] = {"texture":tex,"regions":rects}
 	motion_meta = JSON.parse_string(FileAccess.get_file_as_string("res://assets/motion/animation.json"))
-	for name in ["saber"]:
+	for name in ["saber","air_saber"]:
 		var frames: Array = []
 		for entry in motion_meta[name].frames:
 			frames.append(load("res://assets/motion/"+entry.file))
@@ -240,6 +242,8 @@ func start_game():
 	hurt_pose = 0
 	walk_phase = 0
 	saber_time = 0
+	saber_air = false
+	aim_time = 0
 	saber_cooldown = 0
 	prev_saber = false
 	parries = 0
@@ -326,6 +330,7 @@ func update_game(dt: float):
 		hitstop -= dt
 		return
 	saber_time = maxf(0,saber_time-dt)
+	aim_time = maxf(0,aim_time-dt)
 	saber_cooldown = maxf(0,saber_cooldown-dt)
 	hurt_pose = maxf(0,hurt_pose-dt)
 	muzzle_time = maxf(0,muzzle_time-dt)
@@ -353,6 +358,7 @@ func update_game(dt: float):
 	var saber_input = key(KEY_K) or joy(JOY_BUTTON_RIGHT_SHOULDER)
 	if saber_input and not prev_saber and saber_cooldown<=0 and dash_timer<=0 and hurt_pose<=0:
 		saber_time = 0.42
+		saber_air = not grounded
 		muzzle_time = 0
 		saber_cooldown = 0.60
 		saber_facing = facing
@@ -486,6 +492,7 @@ func update_game(dt: float):
 	if grounded and absf(velocity.x)>15:
 		walk_phase = fmod(walk_phase+absf(velocity.x)*dt/13.0,8.0)
 	else: walk_phase = 0
+	if saber_time>0 and not grounded: saber_air = true
 	if shot_request>=0: shoot(shot_request==1)
 	update_enemies(dt)
 	update_boss(dt)
@@ -501,6 +508,7 @@ func update_game(dt: float):
 
 func shoot(big: bool):
 	if saber_time>0 or hurt_pose>0: return
+	aim_time = 0.25
 	muzzle_time = 0.1
 	shot_timer = 0.18
 	bullets.append({"p":muzzle_position(),"v":Vector2(facing*860,0),"enemy":false,"damage":7 if big else 2,"r":15.0 if big else 5.0,"life":1.8})
@@ -666,6 +674,8 @@ func respawn():
 	bullets.clear()
 	charge = 0
 	saber_time = 0
+	saber_air = false
+	aim_time = 0
 	saber_cooldown = 0
 	prev_saber = false
 	prev_charge = false
@@ -1068,7 +1078,20 @@ func motion_test():
 	set_physics_process(false)
 	start_game()
 	var errors = []
-	if rig_textures.size()!=5 or motions.saber.size()!=6: errors.append("rig and saber assets")
+	if rig_textures.size()!=7 or motions.saber.size()!=6 or motions.air_saber.size()!=6: errors.append("rig and saber assets")
+	velocity=Vector2(285,0)
+	if walk_lean()<deg_to_rad(8): errors.append("moving torso lean")
+	var gun0=walk_arm(0,true)
+	var gun4=walk_arm(4,true)
+	var free0=walk_arm(0,false)
+	var free4=walk_arm(4,false)
+	if absf(gun0.angle-gun4.angle)<0.8 or absf(free0.angle-free4.angle)<0.8: errors.append("arm swing")
+	if (gun0.angle-gun4.angle)*(free0.angle-free4.angle)>=0: errors.append("opposed arms")
+	test_key(KEY_X,true)
+	for phase in range(8):
+		var gun=walk_arm(phase,true)
+		if Vector2.DOWN.rotated(gun.angle).distance_to(Vector2.RIGHT)>0.01: errors.append("cannon horizontal while firing")
+	test_key(KEY_X,false)
 	if gait_foot(0).x<=0 or gait_foot(4).x>=0: errors.append("same leg always in front")
 	for direction in [-1,1]:
 		for frame in range(5):
@@ -1127,6 +1150,24 @@ func motion_test():
 	update_saber()
 	update_saber()
 	if enemies[0].hp!=14: errors.append("one hit per swing")
+	start_game()
+	player=Vector2(180,610)
+	grounded=true
+	invincible=999
+	test_key(KEY_SPACE,true)
+	test_key(KEY_K,true)
+	update_game(1.0/60)
+	test_key(KEY_SPACE,false)
+	test_key(KEY_K,false)
+	if grounded or not saber_air or hero_visual().name!="air_saber": errors.append("jump and air saber input")
+	saber_time=0.21
+	saber_facing=1
+	bullets.clear()
+	bullets.append({"p":player+Vector2(70,-60),"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
+	update_bullets(0)
+	if not bullets.is_empty(): errors.append("air saber parry")
+	grounded=true
+	if hero_visual().name!="air_saber": errors.append("air swing landing continuity")
 	print("MOTION TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
 	get_tree().quit(0 if errors.is_empty() else 1)
 
@@ -1139,22 +1180,30 @@ func capture_motion():
 	camera_x=0
 	grounded=true
 	banner_time=0
-	for action in ["walk","charge","saber","left"]:
-		for frame in range(8 if action in ["walk","charge"] else 6):
-			facing=-1 if action=="left" else 1
+	for action in ["walk","shoot","shootleft","charge","saber","left","air","airleft"]:
+		for frame in range(8 if action in ["walk","shoot","shootleft","charge"] else 6):
+			facing=-1 if action in ["left","shootleft","airleft"] else 1
 			saber_facing=facing
+			grounded=action not in ["air","airleft"]
+			player.y=610 if grounded else 510
+			saber_air=not grounded
+			aim_time=0
+			muzzle_time=0
 			velocity=Vector2(156.75 if action=="charge" else 285,0)
 			walk_phase=frame
 			charge=1.0 if action=="charge" else 0.0
-			saber_time=0.42-frame*0.07-0.001 if action in ["saber","left"] else 0.0
+			saber_time=0.42-frame*0.07-0.001 if action in ["saber","left","air","airleft"] else 0.0
 			bullets.clear()
-			if action in ["walk","charge"]:
+			if action in ["shoot","shootleft","charge"]:
 				shoot(action=="charge")
 			queue_redraw()
 			await get_tree().process_frame
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png("res://test-output/motion-"+action+str(frame)+".png")
 	for pose in ["idle","walk","jump","dash","hurt","charge","saber"]:
+		player.y=610
+		saber_air=false
+		aim_time=0
 		velocity=Vector2(285 if pose=="walk" else 0,0)
 		grounded=pose!="jump"
 		dash_timer=0.15 if pose=="dash" else 0.0
@@ -1174,28 +1223,28 @@ func capture_motion():
 	hurt_pose=0
 	charge=0
 	saber_time=0
+	saber_air=false
+	muzzle_time=0
 	velocity=Vector2(285,0)
-	for frame in range(32):
-		walk_phase=frame/4.0
-		queue_redraw()
-		await get_tree().process_frame
-		await RenderingServer.frame_post_draw
-		get_viewport().get_texture().get_image().save_png("res://test-output/stride-"+str(frame)+".png")
-	print("MOTION CAPTURE: PASS 28 motion + 7 size + 32 interpolated frames")
+	for mode in ["stride","aimstride"]:
+		aim_time=0.25 if mode=="aimstride" else 0.0
+		for frame in range(32):
+			walk_phase=frame/4.0
+			queue_redraw()
+			await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("res://test-output/"+mode+"-"+str(frame)+".png")
+	print("MOTION CAPTURE: PASS 56 motion + 7 size + 64 interpolated frames")
 	get_tree().quit()
 
 func hero_visual() -> Dictionary:
 	var name = ""
 	var index = 0
 	if hurt_pose<=0 and saber_time>0:
-		name = "saber"
+		name = "air_saber" if saber_air else "saber"
 		index = mini(5,int((0.42-saber_time)/0.07))
 	elif hurt_pose<=0 and dash_timer<=0 and grounded and absf(velocity.x)>15:
-		var body = motion_meta.rig.body
-		var hip = walk_hip(walk_phase)
-		var origin = Vector2(body.origin[0],body.origin[1])
-		var socket = Vector2(body.end[0],body.end[1])
-		return {"name":"walk","frame":int(walk_phase)%8,"anchor":origin-hip/body.scale,"muzzle":socket,"scale":body.scale,"texture":rig_textures.body,"region":Rect2(Vector2.ZERO,rig_textures.body.get_size())}
+		return {"name":"walk","frame":int(walk_phase)%8}
 	if name!="":
 		var meta = motion_meta[name].frames[index]
 		return {"texture":motions[name][index],"region":Rect2(0,0,256,256),"anchor":Vector2(meta.anchor[0],meta.anchor[1]),"muzzle":Vector2(meta.muzzle[0],meta.muzzle[1]),"scale":motion_meta[name].scale,"frame":index,"name":name}
@@ -1212,6 +1261,9 @@ func hero_visual() -> Dictionary:
 
 func muzzle_position() -> Vector2:
 	var visual = hero_visual()
+	if visual.name=="walk":
+		var gun = walk_arm(walk_phase,true)
+		return player+Vector2(gun.muzzle.x*facing,gun.muzzle.y)
 	var point = (visual.muzzle-visual.anchor)*visual.scale
 	return player+Vector2(point.x*facing,point.y)
 
@@ -1274,10 +1326,44 @@ func draw_walk_rig(at: Vector2, phase: float):
 		draw_rig_bone(side+"_boot",knee,ankle,at)
 		draw_rig_foot(side,ankle,leg.pitch,at)
 	var body = motion_meta.rig.body
-	var origin = Vector2(body.origin[0],body.origin[1])
-	draw_set_transform(at+Vector2(hip.x*facing,hip.y),0,Vector2(facing,1))
-	draw_texture_rect(rig_textures.body,Rect2(-origin*body.scale,rig_textures.body.get_size()*body.scale),false)
+	draw_walk_arm(at,phase,true)
+	draw_rig_piece("body",hip,walk_lean(),body.scale,at)
+	draw_walk_arm(at,phase,false)
 	draw_set_transform(Vector2.ZERO)
+
+func walk_lean() -> float:
+	return deg_to_rad(9)*clampf(absf(velocity.x)/180.0,0,1)
+
+func walk_aiming() -> bool:
+	return aim_time>0 or charge>0 or key(KEY_X) or key(KEY_J) or joy(JOY_BUTTON_X) or key(KEY_V) or joy(JOY_BUTTON_Y)
+
+func walk_arm(phase: float, gun: bool) -> Dictionary:
+	var body = motion_meta.rig.body
+	var body_origin = Vector2(body.origin[0],body.origin[1])
+	var shoulder = body.gun_shoulder if gun else body.free_shoulder
+	var root = walk_hip(phase)+((Vector2(shoulder[0],shoulder[1])-body_origin)*body.scale).rotated(walk_lean())
+	var name = "gun_arm" if gun else "free_arm"
+	var part = motion_meta.rig[name]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var tip = Vector2(part.end[0],part.end[1])
+	var angle = walk_lean()+cos(phase*TAU/8)*(-0.48 if gun else 0.48)
+	if gun and walk_aiming(): angle = part.aim_angle
+	var socket = root+((tip-origin)*part.scale).rotated(angle)
+	return {"root":root,"angle":angle,"muzzle":socket,"name":name,"scale":part.scale}
+
+func draw_walk_arm(at: Vector2, phase: float, gun: bool):
+	var arm = walk_arm(phase,gun)
+	draw_rig_piece(arm.name,arm.root,arm.angle,arm.scale,at)
+
+func draw_rig_piece(name: String, root: Vector2, angle: float, scale: float, at: Vector2):
+	var texture = rig_textures[name]
+	var part = motion_meta.rig[name]
+	var origin = Vector2(part.origin[0],part.origin[1])
+	var points = PackedVector2Array()
+	for p in [Vector2.ZERO,Vector2(texture.get_width(),0),texture.get_size(),Vector2(0,texture.get_height())]:
+		var position = root+((p-origin)*scale).rotated(angle)
+		points.append(at+Vector2(position.x*facing,position.y))
+	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2.ZERO,Vector2(1,0),Vector2.ONE,Vector2(0,1)]),texture)
 
 func boot_floor(side: String, knee: Vector2, ankle: Vector2, pitch = 0.0) -> float:
 	var part = motion_meta.rig[side+"_boot"]

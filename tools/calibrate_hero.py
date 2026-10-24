@@ -58,6 +58,38 @@ for name,(box,start,end) in pieces.items():
    if point.tolist() not in outline:outline.append(point.tolist())
   parts[name]['outline']=outline
 meta['rig']=parts
+if (base/'upper-raw.png').exists():
+ upper=Image.open(base/'upper-raw.png').convert('RGBA')
+ components={
+  'body':([120,0,710,793],[450,738],[0,0]),
+  'gun_arm':([960,70,1230,793],[1095,170],[1100,745]),
+  'free_arm':([1550,140,1810,745],[1680,255],[1660,670])}
+ for name,(box,start,end) in components.items():
+  im=upper.crop(box);filename='torso-v2.png' if name=='body' else name+'.png';im.save(rig/filename)
+  part={'file':'rig/'+filename,'origin':[start[0]-box[0],start[1]-box[1]],'end':[end[0]-box[0],end[1]-box[1]]}
+  if name=='body':
+   metric,_,bounds=head_metric(im)
+   part.update(scale=reference/metric,head_metric=metric,head_bounds=bounds,
+    gun_shoulder=[560-box[0],461-box[1]],free_shoulder=[340-box[0],465-box[1]])
+  else:
+   distance=((end[0]-start[0])**2+(end[1]-start[1])**2)**.5
+   part['scale']=(45 if name=='gun_arm' else 28)/distance
+   part['aim_angle']=-np.pi/2
+  meta['rig'][name]=part
+if (base/'air_saber/01.png').exists():
+ frames=[];metrics=[]
+ for i in range(6):
+  im=Image.open(base/f'air_saber/{i+1:02}.png')
+  metric,hx,bounds=head_metric(im);metrics.append(metric)
+  frames.append({'file':f'air_saber/{i+1:02}.png','head_x':hx,'head_bounds':bounds})
+ scale=reference/statistics.median(metrics)
+ for frame in frames:
+  x0,y0,x1,y1=frame.pop('head_bounds');hx=frame.pop('head_x')
+  # Airborne hip stays 51px above the physical foot origin, boots tucked above it.
+  hip_y=y1+(y1-y0)*.8
+  frame['anchor']=[hx+4,hip_y+51/scale]
+  frame['muzzle']=[244,(y0+y1)/2+18]
+ meta['air_saber']={'scale':scale,'head_metric':statistics.median(metrics),'frames':frames}
 meta['reference_head_metric']=reference
 (base/'animation.json').write_bytes((json.dumps(meta,indent=2)+'\n').encode())
 print('Reference skull:',reference)
