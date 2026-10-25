@@ -51,6 +51,21 @@ var saber_facing = 1
 var saber_hits: Array = []
 var saber_boss_hit = false
 var prev_saber = false
+var saber_charge = 0.0
+var saber_pending = -1
+var saber_buffer = 0.0
+var saber_tier = 0
+var saber_kind = "ground"
+var saber_total = 0.35
+var saber_startup = 0.07
+var saber_recovery = 0.07
+var saber_prepare_weight = 0.0
+var landing_time = 0.0
+var hero_actions
+var rig_tint = Color.WHITE
+const SABER_REACH = [100.0,155.0,210.0]
+const SABER_DAMAGE = [6,14,24]
+const SABER_BOSS_DAMAGE = [8,18,32]
 var parries = 0
 var font: Font
 var atlas: Texture2D
@@ -116,8 +131,8 @@ const DANMAKU_SABER_COOLDOWN = 0.22
 const DASH_COOLDOWN = 0.45
 const FULL_CHARGE = 1.6
 # The saber is active while saber_time is 0.07..0.28; only its first 0.05 s reflects.
-const JUST_WINDOW = 0.245
-const DANMAKU_JUST_WINDOW = 0.2
+const JUST_WINDOW = 0.035
+const DANMAKU_JUST_WINDOW = 0.08
 var danmaku = false
 # Oni danmaku is danmaku with ten-fold fire and saber-proof shots mixed in.
 var oni = false
@@ -132,7 +147,7 @@ const PLAYER_HALF_WIDTH = 20.0
 const DOOR_PLAYER_HEIGHT = 100.0
 var fixed_seed = false
 const ACTIONS = ["left","right","down","jump","fire","saber","dash"]
-const ACTION_NAMES = {"left":"左へ移動","right":"右へ移動","down":"下（足場から降りる・急降下）","jump":"ジャンプ","fire":"射撃（長押しでため撃ち）","saber":"セーバー","dash":"ダッシュ"}
+const ACTION_NAMES = {"left":"左へ移動","right":"右へ移動","down":"下（足場から降りる・急降下）","jump":"ジャンプ","fire":"射撃（長押しでため撃ち）","saber":"セーバー（長押しで溜め斬り）","dash":"ダッシュ"}
 const PAD_LT = 100
 const PAD_RT = 101
 const PAD_SLOT_COUNT = 4
@@ -285,6 +300,7 @@ func _ready():
 	if records.load(record_path)==OK: best_score=int(records.get_value("records","score",0))
 	build_level()
 	campaign=load("res://campaign.gd").new(self)
+	hero_actions=load("res://hero_actions.gd").new(self)
 	fixed_seed = OS.get_cmdline_user_args().size()>0
 	if "--self-test" in OS.get_cmdline_user_args():
 		muted = true
@@ -376,6 +392,7 @@ func spawn_enemy(pos: Vector2, kind: int, room: int):
 		enemies[-1].dir=-1.0
 
 func start_game():
+	reset_saber_action()
 	if stage==1: boss_max_hp=320
 	# Tests replay the same run; normal play gets a fresh enemy arrangement every time.
 	if fixed_seed: rng.seed = run_seed
@@ -837,6 +854,7 @@ func update_game(dt: float):
 			sound("win")
 		return
 	if state != "play": return
+	read_saber_input(dt)
 	if hitstop>0:
 		hitstop -= dt
 		# Keep presses made during the freeze so a jump or shot is not lost.
@@ -851,6 +869,9 @@ func update_game(dt: float):
 	combo_timer=maxf(0,combo_timer-dt)
 	if combo_timer<=0: combo=0
 	saber_time = maxf(0,saber_time-dt)
+	landing_time=maxf(0,landing_time-dt)
+	saber_buffer=maxf(0,saber_buffer-dt)
+	if saber_buffer<=0: saber_pending=-1
 	aim_time = maxf(0,aim_time-dt)
 	saber_cooldown = maxf(0,saber_cooldown-dt)
 	hurt_pose = maxf(0,hurt_pose-dt)
@@ -877,23 +898,12 @@ func update_game(dt: float):
 	var jump = act("jump")
 	var dash = act("dash")
 	var down = act("down")
-	var saber_input = act("saber")
-	# The saber has no gauge; its cooldown is the only limit. A charge keeps building through the swing.
-	if saber_input and not prev_saber and saber_cooldown<=0 and (dash_timer<=0 or danmaku) and hurt_pose<=0:
-		# Danmaku swings come out almost at once so shots can be returned one after another.
-		saber_time = 0.34 if danmaku else 0.42
-		saber_air = not grounded
-		muzzle_time = 0
-		saber_cooldown = DANMAKU_SABER_COOLDOWN if danmaku else SABER_COOLDOWN
-		saber_facing = facing
-		saber_hits.clear()
-		saber_boss_hit = false
-		sound("dash")
-	prev_saber = saber_input
 	# Each press fires one shot; holding the same button builds a two-stage charge.
 	var fire = act("fire")
 	var shot_request = -1
-	if fire and not prev_fire and saber_time<=0: fire_buffer = 0.12
+	if fire and not prev_fire:
+		fire_buffer = 0.12
+		if saber_time>0: charge_release=maxi(charge_release,0)
 	fire_buffer -= dt
 	if fire_buffer>0 and shot_timer<=0 and saber_time<=0:
 		shot_request = 0
@@ -903,7 +913,7 @@ func update_game(dt: float):
 		if charge>=0.8: charge_release = 2 if charge>=FULL_CHARGE else 1
 		charge = 0
 	# A charge let go mid-swing fires the moment the swing ends.
-	if charge_release>0 and saber_time<=0 and hurt_pose<=0:
+	if charge_release>=0 and saber_time<=0 and hurt_pose<=0:
 		shot_request = charge_release
 		charge_release = -1
 	prev_fire = fire
@@ -934,7 +944,7 @@ func update_game(dt: float):
 		sound("jump")
 	if not jump and prev_jump and velocity.y < -220: velocity.y = -220
 	if axis != 0 and saber_time<=0: facing = 1 if axis > 0 else -1
-	if dash and not prev_dash and dash_cooldown <= 0 and saber_time<=0:
+	if dash and not prev_dash and dash_cooldown <= 0:
 		dash_timer = 0.17
 		dash_cooldown = DASH_COOLDOWN
 		invincible = maxf(invincible, 0.24)
@@ -950,7 +960,7 @@ func update_game(dt: float):
 		var on_ice = stage==1 and int(player.x/ROOM)<24 and layout[int(player.x/ROOM)].ice and grounded
 		# Ice barely grips and lets Lumina slide faster than she can run.
 		var move_accel = 150.0 if on_ice else (650.0 if field_area()==5 and not grounded else 2300.0)
-		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * (340.0 if on_ice else 285.0) * (0.55 if charging else 1.0) * (0.4 if saber_time>0 else 1.0), move_accel*dt)
+		if hurt_pose<=0: velocity.x = move_toward(velocity.x, axis * (340.0 if on_ice else 285.0) * (0.55 if charging else 1.0), move_accel*dt)
 		var low_gravity = field_area()==5
 		var low_gravity_air = low_gravity and not grounded
 		velocity.y = minf(560.0 if low_gravity else 900.0, velocity.y + (900.0 if low_gravity else 1600.0) * dt)
@@ -958,12 +968,15 @@ func update_game(dt: float):
 			velocity.y=move_toward(velocity.y,800.0,2100.0*dt)
 	var old_y = player.y
 	var old_x = player.x
+	var was_grounded=grounded
+	var falling_speed=velocity.y
 	player.x = clampf(player.x + (velocity.x + wind_push()) * dt, backtrack_limit() if stage==1 else campaign.left_limit(), END_X - 30 if stage==1 else campaign.right_limit())
 	player.y += velocity.y * dt
 	grounded = false
 	for p in platforms:
 		if drop_timer>0 and p.size.y<(30 if stage==1 else 35): continue
 		if player.x + 16 > p.position.x and player.x - 16 < p.end.x and old_y <= p.position.y + 1 and player.y >= p.position.y and velocity.y >= 0:
+			if not was_grounded and falling_speed>120: landing_time=0.12
 			player.y = p.position.y
 			velocity.y = 0
 			grounded = true
@@ -1039,12 +1052,18 @@ func update_game(dt: float):
 		walk_phase = fposmod(walk_phase+velocity.x*facing*dt/13.0,8.0)
 	else: walk_phase = 0
 	if saber_time>0 and not grounded: saber_air = true
+	if saber_time>0:
+		if dash_timer>0: saber_kind="dash"
+		elif saber_kind=="ground" and not grounded: saber_kind="air"
+	if saber_pending>=0 and saber_buffer>0 and saber_time<=0 and saber_cooldown<=0 and hurt_pose<=0: begin_saber(saber_pending)
 	# A just dodge loads the next shot as a full charge.
 	if shot_request==0 and dodge_charge>0:
 		shot_request = 2
 		dodge_charge = 0
 	update_aim()
-	if shot_request>=0: shoot(shot_request>=1,shot_request==2)
+	if shot_request>=0:
+		if saber_time>0: charge_release=maxi(charge_release,shot_request)
+		else: shoot(shot_request>=1,shot_request==2)
 	for i in range(popups.size()-1,-1,-1):
 		popups[i].age += dt
 		if popups[i].age>0.8: popups.remove_at(i)
@@ -1452,10 +1471,10 @@ func update_bullets(dt: float):
 					burst(b.p,Color("ffb35a"),10)
 					bullets.remove_at(i)
 					continue
-			if saber_active() and not b.get("solid",false) and saber_rect().grow(b.r).has_point(b.p):
+			if saber_active() and not b.get("solid",false) and saber_catches(b.p,b.r):
 				parries += 1
 				# The first frames of the swing reflect the shot back as a homing bolt.
-				if saber_time>(DANMAKU_JUST_WINDOW if danmaku else JUST_WINDOW):
+				if saber_just():
 					b.enemy = false
 					b.v = Vector2(saber_facing*900,0)
 					b.damage = 1 if danmaku else 3
@@ -1538,6 +1557,8 @@ func hurt(amount: int):
 	shake = 8
 	hurt_pose = 0.24
 	saber_time = 0
+	saber_charge=0
+	saber_pending=-1
 	velocity = Vector2(-facing*250,-180)
 	dash_timer = 0
 	sound("hit")
@@ -1547,6 +1568,7 @@ func hurt(amount: int):
 		deaths += 1
 
 func respawn():
+	reset_saber_action()
 	if stage>1:
 		campaign.respawn()
 		return
@@ -1633,7 +1655,7 @@ func _draw():
 			draw_line(Vector2(x+130,610),Vector2(x+130,390),CYAN if int(room/4)<=checkpoint else Color("466477"),3)
 			txt(Vector2(x+150,428),"RELAY %02d"%(room/4+1),18,CYAN)
 		if room < 4:
-			var tips = [move_label()+"  移動     "+lbl("jump")+"  ジャンプ（2回）", lbl("fire")+"  押すたびに射撃     長押しでため撃ち（金色で貫通）", lbl("dash")+"  ダッシュ・無敵     弾をくぐると次の1発がMAXため撃ち＋スロー", lbl("saber")+"  セーバー：弾を消す     振り始めで当てると敵を追う反射弾"]
+			var tips = [move_label()+"  移動     "+lbl("jump")+"  ジャンプ（2回）", lbl("fire")+"  押すたびに射撃     長押しでため撃ち（金色で貫通）", lbl("dash")+"  ダッシュ・無敵     弾をくぐると次の1発がMAXため撃ち＋スロー", lbl("saber")+"  離して斬る / 長押しで溜め斬り（0.8秒・1.6秒）"]
 			txt(Vector2(x+100,265),tips[room],22,CYAN)
 			if room==1: txt(Vector2(x+100,235),lbl("down").get_slice("（",0)+" ＋ "+lbl("jump").get_slice(" / ",0)+"  足場から飛び降りる",18,Color("bdcbe2"))
 			if room==3: txt(Vector2(x+100,235),"オレンジのトゲ弾はセーバーで消せない — 跳ぶかダッシュで避けよう",18,Color("ff9a3c"))
@@ -1728,12 +1750,7 @@ func _draw():
 		draw_set_transform(point,aim_direction.angle())
 		draw_texture_rect_region(art.muzzle.texture,Rect2(0,-12,24*region.size.x/region.size.y,24),region)
 		draw_set_transform(Vector2.ZERO)
-	if saber_active():
-		var center = player+offset-Vector2(0,45)
-		var progress = (0.42-saber_time-0.14)/0.21
-		var angle = -1.15+2.2*progress
-		if saber_facing<0: angle = PI-angle
-		draw_arc(center,88,angle-0.45,angle+0.45,18,Color(0.4,1,0.9,0.55),4)
+	hero_actions.draw_effects(offset)
 	if charge>0.2:
 		var full = charge>=FULL_CHARGE
 		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/FULL_CHARGE,36,Color("ffe28a") if full else (CYAN if charge>=0.8 else PINK),3 if full else 2)
@@ -1917,7 +1934,7 @@ func draw_hud():
 	txt(Vector2(780,45),"%07d pt"%score,21,Color("ffe28a"))
 	if combo>1: txt(Vector2(780,64),"連続撃破 %d  ×%.1f"%[combo,combo_multiplier()],13,Color("ffe28a"))
 	var charge_text = "MAX（ジャスト）" if dodge_charge>0 else ("MAX" if charge>=FULL_CHARGE else ("READY" if charge>=0.8 else lbl("fire").get_slice(" / ",0)+" 長押し"))
-	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + charge_text + "     SABER  " + ("READY" if saber_cooldown<=0 else "…") + "     CORE  %d / 6"%core_count,14,CYAN)
+	txt(Vector2(340,80),"DASH  " + ("READY" if dash_cooldown<=0 else "…") + "     CHARGE  " + charge_text + "     SABER  " + saber_status() + "     CORE  %d / 6"%core_count,14,CYAN)
 	txt(Vector2(1045,50),time_text(),25)
 	txt(Vector2(1045,80),"撃破 %02d"%kills+("" if using_pad else "  /  M 音"),15,Color("bdcbe2"))
 	draw_rect(Rect2(24,104,1232*clampf(player.x/END_X,0,1),3),PINK)
@@ -2299,7 +2316,10 @@ func motion_test():
 	update_game(1.0/60)
 	test_key(KEY_K,true)
 	update_game(1.0/60)
-	if saber_time<=0 or saber_active(): errors.append("saber input startup")
+	if saber_time>0 or saber_charge<=0: errors.append("saber hold prepares without attacking")
+	test_key(KEY_K,false)
+	update_game(1.0/60)
+	if saber_time<=0 or saber_active(): errors.append("saber release startup")
 	test_key(KEY_K,false)
 	bullets.clear()
 	for direction in [-1,1]:
@@ -2336,6 +2356,7 @@ func motion_test():
 	update_game(1.0/60)
 	test_key(KEY_SPACE,false)
 	test_key(KEY_K,false)
+	update_game(1.0/60)
 	if grounded or not saber_air or hero_visual().name!="air_saber": errors.append("jump and air saber input")
 	saber_time=0.21
 	saber_facing=1
@@ -2473,6 +2494,7 @@ func motion_test():
 	test_key(KEY_K,true)
 	update_game(1.0/60)
 	test_key(KEY_K,false)
+	update_game(1.0/60)
 	if saber_time<=0 or saber_cooldown>DANMAKU_SABER_COOLDOWN: errors.append("danmaku saber during dash")
 	saber_time=0.21
 	saber_facing=1
@@ -2519,7 +2541,8 @@ func capture_motion():
 			velocity=Vector2(156.75 if action=="charge" else 285,0)
 			walk_phase=frame
 			charge=1.0 if action=="charge" else 0.0
-			saber_time=0.42-frame*0.07-0.001 if action in ["saber","left","air","airleft"] else 0.0
+			saber_kind="air" if not grounded else "ground"
+			saber_time=saber_total*(1-(frame+0.25)/6.0) if action in ["saber","left","air","airleft"] else 0.0
 			bullets.clear()
 			if action in ["shoot","shootleft","charge"]:
 				shoot(action=="charge")
@@ -2565,6 +2588,15 @@ func capture_motion():
 	get_tree().quit()
 
 func hero_visual() -> Dictionary:
+	if hurt_pose<=0:
+		var action="idle_rig"
+		if saber_time>0: action="air_saber" if saber_kind=="air" or saber_air else "saber"
+		elif saber_charge>0: action="saber_charge"
+		elif dash_timer>0: action="dash_rig"
+		elif not grounded: action="air_rig"
+		elif absf(velocity.x)>15: action="walk"
+		elif walk_aiming(): action="aim_rig"
+		return {"name":action,"frame":int(walk_phase)%8}
 	var name = ""
 	var index = 0
 	if hurt_pose<=0 and saber_time>0:
@@ -2590,15 +2622,16 @@ func hero_visual() -> Dictionary:
 
 func muzzle_position() -> Vector2:
 	var visual = hero_visual()
-	if visual.name in ["walk","aim_rig"]:
-		var gun = walk_arm(walk_phase if visual.name=="walk" else 0.0,true)
+	if not visual.has("texture"):
+		var gun = walk_arm(walk_phase,true)
 		return player+Vector2(gun.muzzle.x*facing,gun.muzzle.y)
 	var point = (visual.muzzle-visual.anchor)*visual.scale
 	return player+Vector2(point.x*facing,point.y)
 
 func draw_hero(at: Vector2, tint = Color.WHITE):
 	var visual = hero_visual()
-	if visual.name=="walk":
+	rig_tint=tint
+	if not visual.has("texture"):
 		draw_walk_rig(at,walk_phase)
 		return
 	if visual.name=="aim_rig":
@@ -2648,26 +2681,22 @@ func draw_rig_bone(name: String, start: Vector2, end: Vector2, at: Vector2):
 		var position = start+widened.rotated(angle)
 		points.append(at+Vector2(position.x*facing,position.y))
 	var bottom_uv = height/texture.get_height()
-	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2.ZERO,Vector2(1,0),Vector2(1,bottom_uv),Vector2(0,bottom_uv)]),texture)
+	draw_polygon(points,PackedColorArray([rig_tint]),PackedVector2Array([Vector2.ZERO,Vector2(1,0),Vector2(1,bottom_uv),Vector2(0,bottom_uv)]),texture)
 
 func draw_walk_rig(at: Vector2, phase: float):
-	var hip = walk_hip(phase)
+	var hip = hero_actions.hip(phase)
 	# The left cannon arm is behind both legs and the torso.
 	draw_walk_arm(at,phase,true)
 	for side in ["far","near"]:
-		var leg = gait_leg(phase,side)
-		if not grounded or absf(velocity.x)<15:
-			leg.ankle=Vector2(17,-25) if side=="near" else Vector2(-17,-18)
-			if grounded: leg.ankle=Vector2(10,-10) if side=="near" else Vector2(-10,-10)
-			leg.knee=gait_knee(hip,leg.ankle)
-			leg.pitch=-0.08 if side=="near" else 0.08
+		var leg = hero_actions.leg(phase,side)
 		var ankle = leg.ankle
 		var knee = leg.knee
 		draw_rig_bone(side+"_thigh",hip,knee,at)
 		draw_rig_bone(side+"_boot",knee,ankle,at)
 		draw_rig_foot(side,ankle,leg.pitch,at)
 	var body = motion_meta.rig.body
-	draw_rig_piece("body",hip,walk_lean(),body.scale,at)
+	draw_rig_piece("body",hip,hero_actions.torso_angle(),body.scale,at)
+	hero_actions.draw_weapon(at,phase)
 	draw_walk_arm(at,phase,false)
 	draw_set_transform(Vector2.ZERO)
 
@@ -2681,7 +2710,7 @@ func walk_arm(phase: float, gun: bool) -> Dictionary:
 	var body = motion_meta.rig.body
 	var body_origin = Vector2(body.origin[0],body.origin[1])
 	var shoulder = body.gun_shoulder if gun else body.free_shoulder
-	var root = walk_hip(phase)+((Vector2(shoulder[0],shoulder[1])-body_origin)*body.scale).rotated(walk_lean())
+	var root = hero_actions.hip(phase)+((Vector2(shoulder[0],shoulder[1])-body_origin)*body.scale).rotated(hero_actions.torso_angle())
 	var name = "gun_arm" if gun else "free_arm"
 	var part = motion_meta.rig[name]
 	var origin = Vector2(part.origin[0],part.origin[1])
@@ -2694,6 +2723,11 @@ func walk_arm(phase: float, gun: bool) -> Dictionary:
 	if gun and walk_aiming():
 		angle = Vector2(aim_direction.x*facing,aim_direction.y).angle()-(tip-origin).angle()
 		bend = 0.0
+	if grounded and absf(velocity.x)<15 and not walk_aiming():
+		angle=0.08 if gun else 0.0
+		bend=0.4
+	var adjusted=hero_actions.arm_adjust(gun,angle,bend)
+	angle=adjusted.x; bend=adjusted.y
 	var elbow_tex = Vector2(ARM_ELBOW[name][0],ARM_ELBOW[name][1])
 	var elbow = root+((elbow_tex-origin)*part.scale).rotated(angle)
 	var socket = elbow+((tip-elbow_tex)*part.scale).rotated(angle-bend)
@@ -2716,7 +2750,7 @@ func draw_rig_slice(texture: Texture2D, pivot: Vector2, root: Vector2, angle: fl
 	for p in [Vector2(0,top),Vector2(w,top),Vector2(w,bottom),Vector2(0,bottom)]:
 		var position = root+((p-pivot)*scale).rotated(angle)
 		points.append(at+Vector2(position.x*facing,position.y))
-	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2(0,top/h),Vector2(1,top/h),Vector2(1,bottom/h),Vector2(0,bottom/h)]),texture)
+	draw_polygon(points,PackedColorArray([rig_tint]),PackedVector2Array([Vector2(0,top/h),Vector2(1,top/h),Vector2(1,bottom/h),Vector2(0,bottom/h)]),texture)
 
 func draw_rig_piece(name: String, root: Vector2, angle: float, scale: float, at: Vector2):
 	var texture = rig_textures[name]
@@ -2726,7 +2760,7 @@ func draw_rig_piece(name: String, root: Vector2, angle: float, scale: float, at:
 	for p in [Vector2.ZERO,Vector2(texture.get_width(),0),texture.get_size(),Vector2(0,texture.get_height())]:
 		var position = root+((p-origin)*scale).rotated(angle)
 		points.append(at+Vector2(position.x*facing,position.y))
-	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2.ZERO,Vector2(1,0),Vector2.ONE,Vector2(0,1)]),texture)
+	draw_polygon(points,PackedColorArray([rig_tint]),PackedVector2Array([Vector2.ZERO,Vector2(1,0),Vector2.ONE,Vector2(0,1)]),texture)
 
 func boot_floor(side: String, knee: Vector2, ankle: Vector2, pitch = 0.0) -> float:
 	var part = motion_meta.rig[side+"_boot"]
@@ -2769,39 +2803,103 @@ func draw_rig_foot(side: String, ankle: Vector2, pitch: float, at: Vector2):
 		var position = ankle+((p-tip)*scale).rotated(pitch)
 		points.append(at+Vector2(position.x*facing,position.y))
 	var top_uv = float(part.foot_cut)/texture.get_height()
-	draw_polygon(points,PackedColorArray([Color.WHITE]),PackedVector2Array([Vector2(0,top_uv),Vector2(1,top_uv),Vector2.ONE,Vector2(0,1)]),texture)
+	draw_polygon(points,PackedColorArray([rig_tint]),PackedVector2Array([Vector2(0,top_uv),Vector2(1,top_uv),Vector2.ONE,Vector2(0,1)]),texture)
 
 func enemy_rect(enemy: Dictionary) -> Rect2:
 	if enemy.kind>=7: return Rect2(enemy.p-Vector2(38,40),Vector2(76,70))
 	if enemy.kind==6: return Rect2(enemy.p-Vector2(63,132),Vector2(126,142))
 	return Rect2(enemy.p-Vector2(35,72),Vector2(70,82))
 
+func reset_saber_action():
+	saber_charge=0; saber_pending=-1; saber_buffer=0; saber_tier=0
+	saber_kind="ground"; saber_time=0; saber_air=false; prev_saber=false
+	saber_total=0.35; saber_startup=0.07; saber_recovery=0.07; landing_time=0
+	saber_prepare_weight=0
+	charge_release=-1
+
+func read_saber_input(dt: float):
+	var held=act("saber")
+	if held:
+		if not prev_saber: saber_charge=0
+		if saber_time<=0 and hurt_pose<=0:
+			var old=saber_charge
+			saber_charge=minf(FULL_CHARGE,saber_charge+dt)
+			if (old<0.8 and saber_charge>=0.8) or (old<FULL_CHARGE and saber_charge>=FULL_CHARGE): sound("charge")
+	elif prev_saber:
+		if hurt_pose<=0 and saber_time<=saber_recovery+0.05:
+			saber_prepare_weight=smoothstep(0,0.16,saber_charge)
+			saber_pending=2 if saber_charge>=FULL_CHARGE-0.001 else (1 if saber_charge>=0.8 else 0)
+			saber_buffer=0.16
+		saber_charge=0
+	prev_saber=held
+
+func begin_saber(tier: int):
+	saber_tier=clampi(tier,0,2)
+	saber_kind="dash" if dash_timer>0 else ("ground" if grounded else "air")
+	saber_air=not grounded
+	saber_total=(0.30 if danmaku else 0.35)+saber_tier*0.05
+	saber_startup=(0.02 if danmaku else 0.07)+saber_tier*0.015
+	saber_recovery=0.07+saber_tier*0.01
+	saber_time=saber_total
+	saber_cooldown=(DANMAKU_SABER_COOLDOWN+saber_tier*0.16) if danmaku else SABER_COOLDOWN+saber_tier*0.12
+	saber_facing=facing
+	saber_hits.clear(); saber_boss_hit=false; saber_pending=-1; saber_buffer=0
+	muzzle_time=0
+	sound("charge" if tier>0 else "dash")
+
 func saber_active() -> bool:
-	return state=="play" and saber_time>0.07 and saber_time<=0.28 and hurt_pose<=0
+	return state=="play" and saber_time>saber_recovery and saber_time<=saber_total-saber_startup and hurt_pose<=0
+
+func saber_just() -> bool:
+	return saber_active() and saber_total-saber_time<saber_startup+(DANMAKU_JUST_WINDOW if danmaku else JUST_WINDOW)
+
+func saber_status() -> String:
+	if saber_charge>=FULL_CHARGE-0.001: return "MAX / 離す"
+	if saber_charge>=0.8: return "溜め / 離す"
+	if saber_charge>0: return "溜め中"
+	return "READY" if saber_cooldown<=0 else "…"
+
+func saber_reach() -> float:
+	return SABER_REACH[saber_tier]
 
 func saber_rect() -> Rect2:
-	return Rect2(player+Vector2(0 if saber_facing>0 else -100,-112),Vector2(100,122))
+	var reach=saber_reach()
+	if saber_kind=="air": return Rect2(player-Vector2(reach,reach+55),Vector2(reach*2,reach*2))
+	return Rect2(player+Vector2(0 if saber_facing>0 else -reach,-102 if saber_kind=="dash" else -55-reach),Vector2(reach,80 if saber_kind=="dash" else reach*2))
+
+func saber_contacts(target: Rect2) -> bool:
+	if not saber_rect().intersects(target): return false
+	var from=player-Vector2(0,55)
+	if door_between(from.x,target.get_center().x,target.get_center().y): return false
+	var nearest=Vector2(clampf(from.x,target.position.x,target.end.x),clampf(from.y,target.position.y,target.end.y))
+	if door_between(from.x,nearest.x,nearest.y): return false
+	if saber_kind=="dash": return true
+	return from.distance_to(nearest)<=saber_reach()
+
+func saber_catches(point: Vector2, radius: float) -> bool:
+	return saber_contacts(Rect2(point-Vector2.ONE*radius,Vector2.ONE*maxf(1,radius*2)))
 
 func update_saber():
 	if not saber_active(): return
 	for i in range(enemies.size()):
 		var enemy = enemies[i]
-		if enemy.hp<=0 or i in saber_hits or door_between(player.x,enemy.p.x) or not saber_rect().intersects(enemy_rect(enemy)): continue
+		if enemy.hp<=0 or i in saber_hits or not saber_contacts(enemy_rect(enemy)): continue
 		saber_hits.append(i)
-		if enemy.get("shield",false):
+		if enemy.get("shield",false) and saber_tier==0:
 			burst(enemy.p,CYAN,5)
 			continue
-		enemy.hp -= 6
+		enemy.shield=false
+		enemy.hp -= SABER_DAMAGE[saber_tier]
 		enemy.flash = 0.15
 		burst(enemy.p,CYAN,12)
-		hitstop = 0.045
+		hitstop = 0.035+saber_tier*0.015
 		if enemy.hp<=0:
 			register_enemy_defeat(enemy)
-	if boss_active and boss_hp>0 and boss_intro<=0 and not saber_boss_hit and saber_rect().intersects(boss_hit_rect()) and (stage==1 or campaign.boss_vulnerable()):
+	if boss_active and boss_hp>0 and boss_intro<=0 and not saber_boss_hit and saber_contacts(boss_hit_rect()) and (stage==1 or campaign.boss_vulnerable()):
 		saber_boss_hit = true
-		boss_hp -= 8
+		boss_hp -= SABER_BOSS_DAMAGE[saber_tier]
 		boss_flash = 0.15
-		hitstop = 0.045
+		hitstop = 0.035+saber_tier*0.015
 		if boss_hp<=0:
 			state="defeat"
 			ending_time=0

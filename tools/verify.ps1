@@ -12,9 +12,10 @@ $jobs=@(
     @{Name='improvements'; Args='--headless --script res://tools/improvement_test.gd'},
     @{Name='route'; Args='--headless --script res://tools/route_test.gd'},
     @{Name='campaign'; Args='--headless --script res://tools/campaign_test.gd'},
-    @{Name='control-slots'; Args='--headless --script res://tools/control_slots_test.gd'}
+    @{Name='control-slots'; Args='--headless --script res://tools/control_slots_test.gd'},
+    @{Name='melee'; Args='--headless --script res://tools/melee_test.gd'}
 )
-if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}; $jobs+=@{Name='motion-capture'; Args='-- --capture-motion'}; $jobs+=@{Name='campaign-capture'; Args='--script res://tools/campaign_capture.gd'}; $jobs+=@{Name='props-capture'; Args='--script res://tools/props_capture.gd'}}
+if($Capture){$jobs+=@{Name='capture'; Args='-- --capture-qa'}; $jobs+=@{Name='motion-capture'; Args='-- --capture-motion'}; $jobs+=@{Name='campaign-capture'; Args='--script res://tools/campaign_capture.gd'}; $jobs+=@{Name='props-capture'; Args='--script res://tools/props_capture.gd'}; $jobs+=@{Name='melee-capture'; Args='--script res://tools/melee_capture.gd'}}
 foreach($job in $jobs){
     $arguments='--path "'+$root+'" '+$job.Args
     $log=Join-Path $out ($job.Name+'.txt')

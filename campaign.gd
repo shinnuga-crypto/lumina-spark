@@ -395,9 +395,7 @@ func draw_combat(o: Vector2):
 	if g.muzzle_time>0:
 		g.draw_circle(muzzle,13,Color(0.6,1,1,0.6)); g.draw_line(muzzle,muzzle+g.aim_direction*28,Color.WHITE,5)
 	if g.charge>0.2: g.draw_arc(muzzle,10+g.charge*6,g.clock*5,g.clock*5+TAU*g.charge/g.FULL_CHARGE,32,Color("ffe28a"),3)
-	if g.saber_active():
-		var c=g.player+o-Vector2(0,45)
-		g.draw_arc(c,85,-1.2 if g.saber_facing>0 else PI-1.2,1.2 if g.saber_facing>0 else PI+1.2,32,Color(0.3,1,0.8,0.5),5)
+	g.hero_actions.draw_effects(o)
 	if g.mouse_aim:
 		var aim=g.get_global_mouse_position()
 		g.draw_arc(aim,12,0,TAU,24,g.CYAN,1.5)
@@ -409,7 +407,7 @@ func draw_hud():
 	g.txt(Vector2(42,49),"LUMINA %d / %d"%[g.hp,g.max_hp],17,g.PINK)
 	g.draw_rect(Rect2(42,64,220,17),Color("29344b")); g.draw_rect(Rect2(42,64,220*float(g.hp)/g.max_hp,17),g.CYAN)
 	g.txt(Vector2(300,50),data.name,23)
-	g.txt(Vector2(300,80),"DASH %s   SABER %s   CHARGE %s"%["READY" if g.dash_cooldown<=0 else "…","READY" if g.saber_cooldown<=0 else "…","MAX" if g.charge>=g.FULL_CHARGE else "長押し"],14,g.CYAN)
+	g.txt(Vector2(300,80),"DASH %s   SABER %s   CHARGE %s"%["READY" if g.dash_cooldown<=0 else "…",g.saber_status(),"MAX" if g.charge>=g.FULL_CHARGE else "長押し"],14,g.CYAN)
 	g.txt(Vector2(870,49),"%07d pt"%g.score,21,Color("ffe28a")); g.txt(Vector2(1090,49),g.time_text(),24)
 	g.txt(Vector2(870,80),"COMBO %d   撃破 %d"%[g.combo,g.kills],14,Color("c1d4df"))
 	var progress=g.player.x/width if g.stage==2 else g.player.y/height
