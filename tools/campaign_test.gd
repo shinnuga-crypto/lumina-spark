@@ -95,6 +95,19 @@ func run():
 	g.begin_saber(2); g.saber_time=g.saber_total-g.saber_startup-0.03; g.update_saber()
 	check(seal.hp<12,"saber damages a seal")
 	g.boss_active=false; g.reset_saber_action()
+	# Beams: harmless while converging, hit while the column is open, blocked under a shelter roof.
+	fresh(2); g.player=Vector2(1800,610); g.grounded=true; g.invincible=0
+	g.campaign.add_beam(1800.0); var hp=g.hp
+	g.campaign.update_beams(0.5); check(g.hp==hp,"converging beam warning is harmless")
+	g.campaign.update_beams(0.6); check(g.hp<hp,"open beam column hits")
+	g.campaign.beams.clear(); g.player=Vector2(1250,610); g.invincible=0; hp=g.hp
+	g.campaign.add_beam(1250.0); g.campaign.update_beams(1.1); check(g.hp==hp,"shelter roof stops the beam")
+	# A bomber squadron enters from the right, bombs and leaves to the left.
+	fresh(2); g.player=Vector2(3000,610); g.campaign.camera=Vector2(2580,0); g.bullets.clear()
+	g.campaign.spawn_raid(); var raider=g.enemies[-1]
+	for i in range(330): g.campaign.update_enemies(1.0/60)
+	check(g.bullets.any(func(b): return b.get("bomb",false)),"squadron drops bombs")
+	check(raider.hp<=0 and raider.get("gone",false),"squadron leaves the screen")
 	for number in [2,3]: route(number)
 	g.state="clear"; g.stage=1; g.complete_or_start(); check(g.stage==2,"stage 1 continues to 2")
 	g.state="clear"; g.complete_or_start(); check(g.stage==3,"stage 2 continues to 3")

@@ -17,7 +17,7 @@ func run():
 	g.clear_pad_slot("fire",1); await snap("settings-slot-cleared")
 	g.reset_bindings(); fresh(2)
 	g.player=Vector2(1350,610); g.campaign.camera=Vector2(1000,0); g.camera_x=1000
-	for strike in g.campaign.strikes: strike.phase=0.5; strike.target=1600
+	g.campaign.add_beam(1600.0); g.campaign.beams[-1].t=0.5
 	await snap("props-shelter")
 	g.player=Vector2(2750,610); g.campaign.camera=Vector2(2200,0); g.camera_x=2200
 	await snap("props-conveyor")

@@ -13,7 +13,7 @@ func run():
 	fresh(2); g.player=Vector2(460,610); g.aim_override=Vector2(1,-1).normalized(); g.shoot(false)
 	await snap("surface-start")
 	g.player=Vector2(1600,610); g.campaign.camera=Vector2(1050,0); g.camera_x=1050
-	for s in g.campaign.strikes: s.phase=0.6; s.target=1500
+	g.campaign.add_beam(1500.0); g.campaign.beams[-1].t=0.6; g.campaign.add_beam(1900.0); g.campaign.beams[-1].t=1.12
 	await snap("surface-shelter")
 	g.player=Vector2(10300,610); g.campaign.update(0.01); g.campaign.camera=Vector2(10000,0); g.camera_x=10000
 	g.boss_intro=0; g.campaign.update_boss(1); g.aim_override=(g.boss_hit_rect().get_center()-g.player+Vector2(0,75)).normalized(); g.bullets.clear(); g.shoot(true)
@@ -26,7 +26,7 @@ func run():
 	g.boss_intro=0; g.aim_override=Vector2(1,-1).normalized(); g.shoot(true)
 	await snap("shaft-boss-sealed")
 	for seal in g.campaign.seals: seal.hp=0
-	g.campaign.boss_clock=1; g.campaign.rays=[{"y":6200.0,"t":0.7}]
+	g.campaign.boss_clock=1; g.campaign.add_beam(6200.0,true,70,1.0); g.campaign.beams[-1].t=1.12
 	await snap("shaft-boss-open")
 	for stage in [1,2,3]:
 		g.state="title"; g.selected_stage=stage; await snap("title-stage%d"%stage)

@@ -15,6 +15,12 @@ var crumbles: Array = []
 var plugs: Array = []
 var seals: Array = []
 var rays: Array = []
+# Big beams: thin guide lines converge (warning) -> a huge column fires -> it narrows away.
+var beams: Array = []
+var raid_timer = 1.5
+var zone_index = 0
+const BEAM_FIRE = 0.45
+const BEAM_FADE = 0.3
 var boss_clock = 0.0
 var boss_attack = 0
 var actor_texture: Texture2D
@@ -46,9 +52,10 @@ func start(number: int):
 		var p=Vector2(item[1],item[2])
 		if not g.fixed_seed: p+=Vector2(g.rng.randf_range(-55,55),g.rng.randf_range(-20,20) if item[0]!=10 else 0)
 		g.enemies.append({"kind":int(item[0]),"p":p,"origin":p,"hp":18 if item[0]==10 else (12 if item[0]==8 else 8),"room":0,"t":0.0,"shot":1.0+g.rng.randf(),"flash":0.0,"shield":false,"cycle":0})
-	shelters=[]; strikes=[]; crumbles=[]; plugs=[]; seals=[]; rays=[]
+	shelters=[]; strikes=[]; crumbles=[]; plugs=[]; seals=[]; rays=[]; beams=[]; raid_timer=1.5; zone_index=0
 	for p in data.shelters: shelters.append(Rect2(p[0],p[1],p[2],p[3]))
-	for p in data.strikes: strikes.append({"x":float(p[0]),"range":float(p[1]),"target":float(p[0]),"armed":false,"phase":0.0})
+	# Strike zones: [centre, half range, seconds between beams] rain beams on Lumina while she is inside.
+	for p in data.strikes: strikes.append({"x":float(p[0]),"range":float(p[1]),"interval":float(p[2]) if p.size()>2 else 5.5,"timer":1.2})
 	for index in data.crumble: crumbles.append({"index":int(index),"rect":g.platforms[int(index)],"timer":-1.0})
 	for p in data.plugs:
 		plugs.append({"rect":Rect2(p[0],p[1],p[2],p[3]),"hp":12,"index":g.platforms.size()})
@@ -146,15 +153,24 @@ func update(dt: float):
 				g.velocity.y=-820; g.grounded=false; g.jumps=1; g.sound("jump")
 		for belt in data.belts:
 			if g.grounded and absf(g.player.y-belt[1])<2 and g.player.x>belt[0] and g.player.x<belt[0]+belt[2]: g.player.x+=belt[3]*dt
+		# Announce each themed stretch of the surface as Lumina enters it.
+		var zones=data.get("zones",[])
+		if zone_index<zones.size() and g.player.x>=zones[zone_index][0]:
+			g.banner=zones[zone_index][1]; g.banner_time=3
+			zone_index+=1
 		for strike in strikes:
-			strike.phase=fmod(g.elapsed+strike.x/200,5.5)
-			if strike.phase<1.1:
-				if not strike.armed:
-					strike.target=clampf(g.player.x,strike.x-strike.range,strike.x+strike.range)
-					strike.armed=true
-			elif strike.phase<1.5:
-				if absf(g.player.x-strike.target)<72 and not sheltered(g.player): g.hurt(1 if g.easy else 3)
-			else: strike.armed=false
+			if g.boss_active or absf(g.player.x-strike.x)>strike.range: continue
+			strike.timer-=dt
+			if strike.timer<=0:
+				strike.timer=strike.interval*(1.4 if g.easy else 1.0)
+				# Lead a running target a little so standing still and running straight both get caught.
+				add_beam(g.player.x+g.velocity.x*0.8+g.rng.randf_range(-70,70))
+		for raid in data.get("raids",[]):
+			if g.boss_active or g.player.x<raid[0] or g.player.x>raid[1]: continue
+			raid_timer-=dt
+			if raid_timer<=0:
+				raid_timer=float(raid[2])*(1.4 if g.easy else 1.0)
+				spawn_raid()
 	else:
 		for crumble in crumbles:
 			if crumble.timer<0 and g.grounded and absf(g.player.y-crumble.rect.position.y)<2 and absf(g.player.x-crumble.rect.get_center().x)<crumble.rect.size.x/2+12: crumble.timer=0.65
@@ -164,9 +180,10 @@ func update(dt: float):
 		for crusher in data.crushers:
 			if crusher_phase(crusher)>1.2 and crusher_phase(crusher)<2.1 and crusher_rect(crusher).intersects(Rect2(g.player-Vector2(18,85),Vector2(36,85))): g.hurt(1 if g.easy else 3)
 	update_enemies(dt)
+	update_beams(dt)
 	if not g.boss_active and ((g.stage==2 and g.player.x>arena.position.x+70) or (g.stage==3 and g.player.y>arena.position.y+170)):
 		g.boss_active=true; g.boss_intro=1.3; checkpoint_pos=Vector2(arena.position.x+150,610 if g.stage==2 else 6300)
-		g.hp=g.max_hp; g.bullets.clear()
+		g.hp=g.max_hp; g.bullets.clear(); beams.clear()
 		g.banner="空の覇者・ヴァルチャー" if g.stage==2 else "深層固定要塞・アビス・マザー"
 		g.banner_time=3
 	if g.boss_active: update_boss(dt)
@@ -174,6 +191,39 @@ func update(dt: float):
 	if g.boss_active: target=Vector2(arena.position.x,maxf(0,height-720) if g.stage==3 else 0)
 	camera=camera.lerp(target,1-exp(-dt*8))
 	g.camera_x=camera.x
+
+func add_beam(pos: float, horizontal=false, width=150.0, charge=1.0):
+	beams.append({"pos":pos,"h":horizontal,"w":width,"charge":charge,"t":0.0,"fired":false})
+
+# Current width: zero while charging, snaps open, holds, then narrows back to a line.
+func beam_width(b: Dictionary) -> float:
+	var f=b.t-b.charge
+	if f<0: return 0.0
+	if f<BEAM_FIRE: return b.w*(1-pow(1-minf(1,f/0.07),3))
+	return b.w*(1-smoothstep(0,1,(f-BEAM_FIRE)/BEAM_FADE))
+
+func update_beams(dt: float):
+	for i in range(beams.size()-1,-1,-1):
+		var b=beams[i]
+		b.t+=dt
+		if b.t>=b.charge and not b.fired:
+			b.fired=true
+			g.shake=maxf(g.shake,6)
+			g.sound("hit")
+		var width=beam_width(b)
+		if width>b.w*0.45:
+			# The hit area stays inside the bright part of the column.
+			var inside=absf(g.player.y-45-b.pos)<width*0.4 if b.h else absf(g.player.x-b.pos)<width*0.38
+			if inside and (b.h or not sheltered(g.player)): g.hurt(1 if g.easy else 3)
+		if b.t>b.charge+BEAM_FIRE+BEAM_FADE: beams.remove_at(i)
+
+# A bomber squadron sweeps in from the right, carpets the ground with bombs and leaves to the left.
+func spawn_raid():
+	for k in range(3):
+		var p=Vector2(camera.x+1380+k*120,150+k*40)
+		g.enemies.append({"kind":8,"p":p,"origin":p,"hp":4,"room":0,"t":0.0,"shot":0.25+k*0.15,"flash":0.0,"shield":false,"cycle":0,"raider":true})
+	g.banner="爆撃編隊、接近！  屋根の下へ"
+	g.banner_time=1.6
 
 func sheltered(feet: Vector2) -> bool:
 	for roof in shelters:
@@ -188,8 +238,16 @@ func crusher_rect(item: Array) -> Rect2:
 
 func update_enemies(dt: float):
 	for e in g.enemies:
-		if e.hp<=0 or not Rect2(camera-Vector2(200,220),Vector2(1680,1160)).has_point(e.p): continue
+		# Squadrons spawn beyond the right edge and must keep flying until they leave.
+		if e.hp<=0 or (not e.get("raider",false) and not Rect2(camera-Vector2(200,220),Vector2(1680,1160)).has_point(e.p)): continue
 		e.t+=dt; e.shot-=dt; e.flash=maxf(0,e.flash-dt)
+		if e.get("raider",false):
+			e.p=Vector2(e.p.x-430*dt,e.origin.y+sin(e.t*3)*10)
+			if e.shot<=0 and e.p.x<camera.x+1260:
+				e.shot=0.3
+				g.enemy_shot(e.p+Vector2(0,25),Vector2(-150,40),11,"bomb")
+			if e.p.x<camera.x-160: e.hp=0; e.gone=true
+			continue
 		var offset=Vector2(sin(e.t*1.5+e.origin.x)*100,cos(e.t*2)*38)
 		if e.kind==7:
 			e.p=e.origin+offset
@@ -221,8 +279,15 @@ func update_boss(dt: float):
 		if g.boss_timer<=0:
 			g.boss_timer=0.8 if g.boss_phase==2 else 1.15
 			var toward=(g.player-Vector2(0,45)-(g.boss_pos-Vector2(0,20))).normalized()
-			for angle in [-0.25,0,0.25]: g.enemy_shot(g.boss_pos-Vector2(0,20),toward.rotated(angle)*250,9)
-			if g.boss_phase==2: g.enemy_shot(g.boss_pos+Vector2(-120,20),Vector2(0,100),11,"bomb")
+			boss_attack+=1
+			if boss_attack%4==0:
+				# Beam curtain around Lumina: the gaps between columns are where to stand.
+				var spread=[-240,0,240] if g.boss_phase==1 else [-360,-180,0,180,360]
+				for dx in spread: add_beam(clampf(g.player.x+dx,arena.position.x+60,arena.end.x-60),false,120,0.9)
+				g.boss_timer=1.9
+			else:
+				for angle in [-0.25,0,0.25]: g.enemy_shot(g.boss_pos-Vector2(0,20),toward.rotated(angle)*250,9)
+				if g.boss_phase==2: g.enemy_shot(g.boss_pos+Vector2(-120,20),Vector2(0,100),11,"bomb")
 		if g.boss_pos.distance_to(g.player-Vector2(0,40))<115: g.hurt(3)
 	else:
 		# The final boss NEVER leaves its wall mount. Telegraph aimed horizontal beams.
@@ -230,16 +295,17 @@ func update_boss(dt: float):
 			g.boss_timer=2.6 if g.boss_phase==2 else 3.3
 			boss_attack+=1
 			if boss_attack%3==0:
-				rays.append({"y":clampf(g.player.y-45,5700,6250),"t":1.1})
+				# Horizontal cannon at Lumina's height: jump over it or drop below it.
+				add_beam(clampf(g.player.y-45,5700,6250),true,70,1.0)
+			elif boss_attack%3==1:
+				# Pillars from the ceiling on Lumina and beside her: keep moving.
+				for dx in [-260,0,260]: add_beam(clampf(g.player.x+dx,60,820),false,110,1.0)
 			else:
 				var from=g.boss_pos-Vector2(40,150)
 				var direction=(g.player-Vector2(0,45)-from).normalized()
 				for angle in [-0.45,-0.22,0,0.22,0.45]: g.enemy_shot(from,direction.rotated(angle)*230,9,"solid" if boss_attack%2==0 and angle==0 else "")
-			if g.boss_phase==2 and boss_attack%2==0: rays.append({"y":6050.0,"t":1.3})
-	for i in range(rays.size()-1,-1,-1):
-		rays[i].t-=dt
-		if rays[i].t<0.28 and absf(g.player.y-45-rays[i].y)<27: g.hurt(1 if g.easy else 3)
-		if rays[i].t<=0: rays.remove_at(i)
+			# Phase 2 sweeps the floor too, so the ledges are needed.
+			if g.boss_phase==2 and boss_attack%2==0: add_beam(6255.0,true,70,1.2)
 
 func respawn():
 	g.player=checkpoint_pos; g.safe_pos=checkpoint_pos; g.velocity=Vector2.ZERO
@@ -248,8 +314,9 @@ func respawn():
 	g.jumps=0; g.prev_jump=false; g.prev_fire=false; g.prev_dash=false; g.prev_saber=false
 	g.fire_buffer=0; g.drop_buffer=0; g.walk_phase=0; g.aim_time=0; g.saber_air=false
 	for crumble in crumbles: crumble.timer=-1.0; g.platforms[crumble.index]=crumble.rect
+	beams=[]
 	if g.boss_active:
-		g.boss_hp=g.boss_max_hp; g.boss_intro=1.3; g.boss_timer=0; boss_clock=0; rays=[]
+		g.boss_hp=g.boss_max_hp; g.boss_intro=1.3; g.boss_timer=0; boss_clock=0; rays=[]; beams=[]; boss_attack=0
 		if g.stage==3: reset_seals()
 	g.state="play"
 
@@ -318,6 +385,7 @@ func draw():
 			actor(4,g.boss_pos+o,Vector2(420,300),Color(2,1.3,1.3) if g.boss_flash>0 else Color.WHITE)
 			if fmod(boss_clock,8)>5.2: g.txt(Vector2(450,180),"急降下の予告 — 真下から離れよう",20,Color("ffbc68"))
 		else: draw_final_boss(o)
+	for b in beams: draw_beam(b,o)
 	draw_combat(o)
 	draw_hud()
 	if g.state=="pause": g.panel("一時停止",g.confirm_label()+" / ESCで再開","O：設定・音量    R：タイトルへ")
@@ -334,12 +402,6 @@ func draw_surface(o: Vector2):
 		prop("props-surface",3,Rect2(p+Vector2(roof.size.x-40,58),Vector2(32,610-roof.position.y-58)))
 		prop("props-surface",2,Rect2(p,Vector2(roof.size.x,64)))
 		g.txt(p+Vector2(20,90),"防空シェルター",20,g.CYAN)
-	for strike in strikes:
-		if strike.phase<1.5 and absf(strike.target-g.player.x)<1000:
-			var x=strike.target+o.x
-			g.draw_line(Vector2(x,100),Vector2(x,610),Color(1,0.35,0.25,0.4 if strike.phase<1.1 else 0.9),2 if strike.phase<1.1 else 80)
-			g.draw_arc(Vector2(x,600),72,PI,TAU,32,Color("ffa25d"),3)
-			if strike.phase<1.1: g.txt(Vector2(x-45,240),"空爆予告",18,Color("ffb55f"))
 	for vent in data.vents:
 		var p=Vector2(vent[0],vent[1])+o
 		prop("props-surface",4,Rect2(p,Vector2(vent[2],50)))
@@ -398,10 +460,6 @@ func draw_final_boss(o: Vector2):
 			g.draw_arc(seal.p+o,32,g.clock,g.clock+TAU,32,g.CYAN,2)
 			g.txt(seal.p+o+Vector2(-34,-40),"封印装置",15,g.CYAN)
 	g.txt(Vector2(330,210),"封印装置を破壊 → 光るコアを狙え" if not boss_vulnerable() else "コア開放！ 上へ狙って撃ち込め",21,Color("ffe28a"))
-	for ray in rays:
-		var y=ray.y+o.y
-		g.draw_line(Vector2(30,y),Vector2(1030,y),Color(1,0.3,0.5,0.4 if ray.t>0.28 else 1),2 if ray.t>0.28 else 42)
-		if ray.t>0.28: g.txt(Vector2(70,y-12),"水平砲撃  /  ジャンプで回避",17,Color("ff9eae"))
 
 func draw_combat(o: Vector2):
 	for b in g.bullets:
@@ -442,3 +500,49 @@ func draw_hud():
 		g.draw_rect(Rect2(355,636,570,64),Color(0.02,0.03,0.08,0.82))
 		g.draw_rect(Rect2(370,672,540,20),Color("30233f")); g.draw_rect(Rect2(370,672,540*float(g.boss_hp)/g.boss_max_hp,20),g.PINK)
 		g.txt(Vector2(430,660),"SKY VULTURE" if g.stage==2 else "ABYSS MOTHER / 壁面固定要塞",19)
+
+func draw_beam(b: Dictionary, o: Vector2):
+	var col=Color("ff5a3c") if g.stage==2 else Color("ff4fa8")
+	var k=clampf(b.t/b.charge,0,1)
+	if b.h:
+		draw_beam_shape(b.pos+o.y,true,30.0,1030.0,k,beam_width(b),b.t<b.charge,col)
+		if b.t<b.charge: g.txt(Vector2(70,b.pos+o.y-16),"水平砲撃  /  ジャンプか下へ",17,Color("ff9eae"))
+		return
+	var bottom=610.0 if g.stage==2 else 6300.0
+	if g.stage==2:
+		for roof in shelters:
+			if b.pos>roof.position.x+12 and b.pos<roof.end.x-12: bottom=roof.position.y
+	draw_beam_shape(b.pos+o.x,false,camera.y+104+o.y,bottom+o.y,k,beam_width(b),b.t<b.charge,col)
+	if b.t<b.charge and g.stage==2 and not g.boss_active: g.txt(Vector2(b.pos+o.x-40,150),"光線予告",17,Color("ffb55f"))
+
+# Screen-space drawing shared with stage 1: thin guide lines that close in on the line while
+# charging, then a huge layered column (glow, body, white core) with a flare where it lands.
+func draw_beam_shape(line: float, horizontal: bool, from: float, to: float, k: float, width: float, charging: bool, col: Color):
+	var axis=func(along: float, across: float) -> Vector2: return Vector2(along,across) if horizontal else Vector2(across,along)
+	if charging:
+		var spread=lerpf(150,0,pow(k,1.6))
+		for i in range(-3,4):
+			var offset=line+spread*i/3.0
+			var a=0.18+0.5*k*(1.0-absf(i)/4.0)
+			g.draw_line(axis.call(from,offset),axis.call(to,offset),Color(col,a),1.5)
+		g.draw_line(axis.call(from,line),axis.call(to,line),Color(1,1,1,0.25+0.6*k),1.5+2*k)
+		g.draw_circle(axis.call(to,line),6+22*k,Color(col,0.25+0.4*k))
+		return
+	if width<=0.5: return
+	var jitter=sin(g.clock*70)*width*0.04
+	# Soft layers: each fades from its centre line to transparent edges, so the column glows.
+	for layer in [[1.0,0.5,col],[0.6,0.95,col.lightened(0.25)],[0.42,0.9,col.lightened(0.5)],[0.24,1.0,Color(1,0.98,0.92)]]:
+		var half=(width*layer[0]+jitter)
+		var centre=Color(layer[2],layer[1])
+		var edge=Color(layer[2],0.0)
+		for side in [-1,1]:
+			var a=axis.call(from,line); var b=axis.call(to,line)
+			var c=axis.call(to,line+side*half); var d=axis.call(from,line+side*half)
+			g.draw_polygon(PackedVector2Array([a,b,c,d]),PackedColorArray([centre,centre,edge,edge]))
+	# Impact flare: a flattened bloom where the column hits the floor or roof.
+	var hit=axis.call(to,line)
+	g.draw_set_transform(hit,0,Vector2(1,0.28) if not horizontal else Vector2(0.28,1))
+	for ring in range(6):
+		var r=width*(1.3-ring*0.18)
+		g.draw_circle(Vector2.ZERO,r,Color(col.lerp(Color(1,0.97,0.9),ring/5.0),0.12+ring*0.08))
+	g.draw_set_transform(Vector2.ZERO)

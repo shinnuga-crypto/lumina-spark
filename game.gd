@@ -1735,7 +1735,10 @@ func _draw():
 		draw_rect(Rect2(BOSS_X+offset.x,200,12,410),PINK)
 		for ray in boss_rays:
 			var x = ray.x+offset.x
-			draw_line(Vector2(x,140),Vector2(x,610),Color(1,0.35,0.6,0.3) if ray.t>0.45 else Color(1,0.8,0.9),2 if ray.t>0.45 else 45)
+			# Same converge -> huge column -> narrow-out beam as the later stages.
+			var fired=0.45-ray.t
+			var width=70.0*(1-pow(1-clampf(fired/0.07,0,1),3))*(1-smoothstep(0.3,0.45,fired)) if fired>=0 else 0.0
+			campaign.draw_beam_shape(x,false,140.0,610.0,clampf((1.5-ray.t)/1.05,0,1),width,ray.t>0.45,Color("ff4fa8"))
 			if ray.t>0.45: txt(Vector2(x-17,180),"▼",24,PINK)
 	for b in bullets:
 		if not b.enemy and b.damage>=7:
