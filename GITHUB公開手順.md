@@ -6,6 +6,7 @@
 - 配布リリース：[v1.0.0](https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.0.0)。EXE・ZIP・SHA256SUMS.txtを添付済み。公開状態と全ファイルのuploaded状態・サイズをAPIで確認。EXEとZIPのGitHub側SHA-256はローカルと一致。
 - 2026-10-24 Claude：[v1.1.0](https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.1.0) を追加（弾幕・鬼弾幕、設定画面など）。`tools/build-windows.ps1` の既定の版を1.1.0に、`export_presets.cfg` の版を1.1.0.0に。
 - 2026-10-25 GPT：[v1.2.0](https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.2.0) を追加（地上・下降地下、新敵4/ボス2、全方向のボーン射撃）。ビルド既定1.2.0、EXE157,277,616バイト、ZIP86,843,105バイト。非draft・3添付uploaded・EXE/ZIPのdigest一致をAPIで確認。
+- 2026-10-25 GPT：[v1.2.1](https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.2.1) を追加（ギミック作画15点、パッド1機能4枠）。ビルド既定1.2.1、EXE160,286,272バイト、ZIP89,809,381バイト。非draft・3添付uploaded・EXE/ZIPのdigest一致を確認。主人公のモーションは相談待ちで未変更。
 - ソース：このゲームのファイルと履歴だけを `git subtree split --prefix="Projects/ゲーム/Lumina Spark" HEAD` で抽出する。親のCodexリポジトリをそのままプッシュしない。親リポジトリにリモートを追加しない。
 - 配布：`build/windows/LuminaSpark.exe`、`build/LuminaSpark-v<版>-windows-x64.zip`、`build/SHA256SUMS.txt`。EXE/ZIPはGit履歴に入れずGitHub Releasesへ添付する。
 - リリース本文：`RELEASE_NOTES.md`。
