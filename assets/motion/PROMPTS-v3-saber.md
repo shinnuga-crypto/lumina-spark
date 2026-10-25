@@ -1,0 +1,64 @@
+# 斬撃・ダッシュ v3 の生成プロンプト全文
+
+2026-10-25 GPT。組み込み image_gen、透明背景。参照画像は既存キャラクターのデザイン参照。生成原画をそのまま保存し、領域・アンカーはメタデータで指定する。
+
+## 地上6コマ（ground-v3.png）
+
+参照: assets/motion/seed.png
+
++Create a production-ready transparent RGBA sprite atlas for the exact anime heroine in the reference, a pink bob-haired star-clip girl in white/teal/gold sci-fi armor, teal eyes, chunky boots. Preserve her recognizable face, outfit and proportions. She faces screen RIGHT in EVERY cell. Anatomical LEFT arm is the arm cannon on the FAR side behind her torso; anatomical RIGHT near hand holds a cyan energy saber. Do not swap arms. Use the reference as character design, NOT as a pose to repeat.
+Canvas: landscape 3 columns by 2 rows, EXACTLY SIX equal square cells, read left to right then next row. Transparent background, no grid, no labels, no scenery, no floor, no shadows, no ambient haze or rectangular glow. Each full figure and every blade tip and energy trail must be wholly contained in its OWN cell with generous transparent margins. At least 35px transparent gutter on every side of each cell. Same skull size and same planted foot baseline throughout. Characters about 36 percent of a cell's height, positioned slightly LEFT of cell center so big forward arcs fit. All six heads SAME size; do not zoom frames. Clean crisp polished hand-painted anime game sprites, dark readable contour, material shading like reference, no pixel-art filter.
+Frame 1: low wide grounded wind-up, saber raised behind and above head, no energy trail. Frame 2: instantaneous powerful DOWNWARD strike already at finish, saber angled front-down, deep forward lunge, front knee bent, rear leg stretched and heel raised, torso leaning into it. A broad luminous cyan CRESCENT traces from above her head around the FRONT/right side to foot level; clear white bright edge and a translucent interior, entirely inside cell. Frame 3: same downward follow-through held low, small fading short trail only. Frame 4: second wind-up, saber drawn down/back ready to slash UP, no trail. Frame 5: forceful upward finish, near arm and saber raised diagonally forward-up, a broad cyan crescent from front-bottom to front-top, body drives upward. Frame 6: ready stance returning to guard, saber lowered forward, cannon relaxed far behind silhouette, no trail. The blade itself is the SAME short length in all frames. Only the arc is large. Show clear contact poses, not six similar idle poses. Maintain exact costume, body scale, facing and anchor; all body parts remain visible.
+
+## 地上の余白と腕の修正
+
+参照: ground-v3-candidate.png / 保存: ground-v3.png
+
+Correct this six-frame action sprite atlas into a usable GAME ASSET, preserving the heroine, costume, six poses and strong animation. Exactly 3 columns x 2 rows of equal square cells, transparent RGBA. CRITICAL CHANGES: shrink EACH character and its entire effect to 70% of its current size inside its own cell, leaving at least 60 pixels completely transparent EMPTY padding all around every pose, blade and crescent. Center each complete pose within its slot, keeping same skull size and planted feet baseline. NO bleed across cell boundaries. The background must be literally alpha zero, NO colored mist, NO broad haze, NO atmospheric gradients; only the narrow actual saber slash may glow. Clean compact alpha silhouettes.
+CRITICAL ANATOMY: EXACTLY TWO ARMS per heroine. Her far/anatomical LEFT arm ends in the single white/teal arm cannon, drawn behind the body; her near/anatomical RIGHT arm has a single gloved hand holding the short cyan sword. There is NO third arm, NO extra fist beneath the cannon, NO duplicated shoulder or detached hands. In frame 1 delete the extra dangling fist/forearm: just sword arm overhead and cannon arm behind her, TWO arms only. In all poses sword stays in same hand, cannon stays in same far arm. Both legs visible. Consistent body/face size. Keep the six specific key poses: wind-up, front-down slash with cyan crescent, low follow-through, second low/back wind-up, front-up slash with crescent, ready return. Short identical sword blade length; big crescent not a long sword. All face RIGHT. Crisp anime game sprite, no text, no grid, no floor or shadow.
+
+
+## 空中6コマ
+
+参照: ground-v3.png / 保存: air-v3.png
+
+Make an AIRBORNE version of this exact six-frame heroine saber atlas. Preserve the exact heroine, head size, costume, short saber, arm cannon, RIGHT facing, six upper-body key poses and cyan slash arc directions. Layout EXACTLY 3 equal columns x 2 equal rows, SIX frames, transparent RGBA. Use the SAME common scale across all frames. Each pose and ALL blade tips and arc edges stay wholly within its OWN cell with at least 40px empty transparent margin, especially right/bottom edges. Do not enlarge the character to fill space.
+CHANGE: she is airborne in every frame. BOTH knees are clearly bent up and boots tucked below/behind the hips, as a compact jumping action heroine, no ground stance and no extended running legs. Front knee is raised, back knee folds behind, recognizable two legs with equal bone proportions. Keep the HIP at the same relative cell position throughout; do not align feet of a floating character. Dynamic forward tilt but consistent head scale. Frame1 airborne overhead wind-up no trail; frame2 airborne forward-down slash with broad FRONT cyan crescent; frame3 tucked-leg low follow-through fading small trail; frame4 tucked-leg low/back second wind-up no trail; frame5 airborne rising slash with front cyan crescent; frame6 airborne ready return short blade forward no trail. Exactly TWO arms: anatomical LEFT/far arm is the single cannon behind torso, anatomical RIGHT/near hand wields the saber. No extra fist or third arm. Do not swap weapons.
+ZERO scenery, ZERO floor or shadow, ZERO rectangular colored mist/haze/background glow, no grid, no writing. Fully transparent empty space between separated silhouettes. Only actual slash arcs and blades emit a tight local glow. Crisp anime game asset shading matched to reference.
+
+
+## 最大溜め4コマ
+
+参照: ground-v3.png / 保存: heavy-v3.png
+
+Generate a FOUR-frame MAXIMUM CHARGED SABER animation atlas for the SAME pink-bob star-clip white/teal/gold armored heroine in the reference. Exactly TWO columns x TWO rows, FOUR equal cells, left-right top-bottom. Transparent RGBA background; empty padding, no text, no floor, no shadows, no ambient mist/haze. Entire silhouettes, blade tips and crescent ends comfortably INSIDE each cell, with a broad empty gutter. Right facing in ALL four. Same face, head size, body scale and grounded baseline across frames. Compact figure occupies at most 45 percent cell height, placed LEFT of center to reserve room for an enormous FRONT arc. Keep full silhouettes small enough so no tip is cut.
+Exactly TWO arms: anatomical LEFT/far arm is the white-teal ARM CANNON behind torso, anatomical RIGHT near hand wields the cyan saber. Do not add a third fist or arm. Same SHORT blade length, never extend the physical sword. Costume and boots exactly like the reference. Crisp polished anime game illustration with solid colored armor and dark clear outlines.
+Frame 1: deeply crouched grounded CHARGE pose, feet spread front/back, saber pulled LOW BEHIND her waist/back pointing backwards/down, near elbow bent. Calm small gold charge spark at grip only, NO trail. Frame 2: still low, sword arm whipped up from behind to ABOVE the head ready to release; no large trail yet. Frame 3: enormous heavy slash has ALREADY finished front-down, aggressive extreme forward lunge, broad GOLDEN luminous crescent with white-hot cutting edge sweeps from overhead around FRONT to floor height, 1.8 times figure height but entirely INSIDE the cell. The gold crescent, not a longer sword, gives the scale and force. No motion duplicates of the heroine. Frame 4: low held follow-through front-down, weight on bent front knee, back leg stretched, gold crescent nearly gone with only 2 small tapering sparks. Hold clear powerful poses, skip intermediate swing positions.
+
+
+## ダッシュ4姿勢
+
+参照: ground-v3.png / 保存: dash-v3.png
+
+Create a FOUR-cell anime game DASH action atlas for the exact heroine in reference: pink bob, gold star clip, teal eyes, white/teal/gold armor, chunky teal armored boots. RIGHT facing, exactly two arms and two legs. Anatomical LEFT/far arm is the arm cannon BEHIND torso; RIGHT/near gloved hand is free or carries the saber. Maintain skull size, proportions, costume throughout. 2 columns by 2 rows, exact four separate equal slots. Transparent RGBA, EMPTY alpha-zero space around ALL silhouettes, no grid/text/floor/shadows/mist/colored haze. Generous gutters, no cropped feet, heads, hands, gun barrels or blade tips. Full body never larger than 65% cell width and 60% cell height. Sharply readable polished anime game sprites matched to reference.
+Exaggerated forward body lean: torso about 65 degrees from upright, head low and thrust forward; not an ordinary running pose. Rear leg extends BACK and its pointed TOE kicks off an invisible ground plane. Front thigh drives forward, front KNEE folded HIGH; back heel up. The hips remain low, weight and motion clearly toward RIGHT. Arms sweep BACK, cannon on far side.
+Top-left FRAME1: violent toe push-off, rear leg stretched down-back, front knee driven high, torso very low and leaning forward, both arms back. Top-right FRAME2: low airborne dash glide, same extreme lean and head size, rear boot trailing, front knee tucked, both arms back; no streaks or smoke. Bottom-left FRAME3: same low dash but far cannon arm extends FORWARD horizontally to shoot, near free arm swept back; barrel readable, only one cannon. Bottom-right FRAME4: DASH SABER THRUST, same momentum and tuck, right near sword hand drives straight FORWARD with short cyan blade, cannon trails back behind torso. Blade length stays short, not a gigantic spear. One narrow cyan energy wake behind the blade only, no wide crescent. Entire sword stays inside its cell. All frames powerful, aerodynamic, not standing.
+
+
+## 空中最大溜め4コマ
+
+参照: heavy-v3.png / 保存: heavy-air-v3-candidate.png
+
+Transform this EXACT four-frame charged saber heroine atlas into an AIRBORNE version. Keep 2 columns by 2 rows, FOUR equal cells, all RIGHT facing, exact same heroine, face, costume, head scale, two arms and two legs. Far anatomical LEFT arm is the cannon BEHIND torso; near RIGHT gloved hand holds the same SHORT cyan saber. Never swap weapons or add hands. In EVERY frame fold BOTH legs into a compact jump: front knee high and bent, rear knee folded behind, boots tucked under hips. No grounded lunging legs, no ground, no shadows. Keep HIP in consistent relative place in every cell. Frame1 drawn-back low charged sword behind waist, frame2 overhead windup, frame3 instantaneous forceful front-down finish with HUGE golden front crescent, frame4 held low follow-through with faint gold sparks. Preserve the giant golden crescent, white-hot edge, short blade. No blade extension. ALL blade tips and trails safely inside OWN slot with empty transparent margin. Pure transparent RGBA outside sprites and tight actual light effects; no colored background haze, no grid or words. Same crisp anime game asset style. Ensure enough room around the large gold arc.
+
+
+## 空中最大溜めの余白修正
+
+参照: heavy-air-v3-candidate.png / 保存: heavy-air-v3.png
+
+Re-layout this exact FOUR-frame AIRBORNE charged slash atlas into a clean 2x2 game sprite sheet. Preserve all four poses, character design, tucked legs, two arms, weapon hands, short sword, golden arc and RIGHT facing. Main correction is SPACING: shrink the WHOLE character plus complete glow/arc in EACH cell to about 65% of current size, using the SAME reduction for all four. The bottom-left golden slash currently crosses into the cells above and to its right: it MUST be fully isolated inside its own bottom-left quarter, including its entire TOP and RIGHT bright edges. Put at least 60px completely empty transparent gutter between each complete sprite/effect and every cell boundary. Each full pose centered inside its own quarter. Four equal slots: top-left charge, top-right overhead windup, bottom-left gold impact slash, bottom-right follow-through. Do NOT clip or crop the golden crescent; make it FIT with margins by scaling down every entire pose equally. Maintain common head scale and hip anchor. No ambient colored haze, no rectangular background; literal alpha-zero outside tight sprite/effect silhouettes. No grid, words, shadows, floor, duplicates, added arms. It is better to have LARGE EMPTY SPACE than to fill the canvas.
+
+
+## 組み込み
+
+原画の画素は変更せず、v3-regions.jsonで矩形、頭の寸法に基づく倍率、足元/腰アンカー、銃口を指定。全コマを同じ頭寸法に補正する。最大溜め地上の下段は金色の軌跡全体を収めるため、512/768の固定幅ではなく測定した領域を使用。候補は保持し、配布から除外する。
