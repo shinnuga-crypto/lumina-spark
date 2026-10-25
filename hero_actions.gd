@@ -175,6 +175,7 @@ func draw_weapon(at: Vector2, phase: float):
 	else: g.draw_line(pose.hand,pose.tip,g.CYAN,4)
 
 func draw_effects(offset: Vector2):
+	if g.action_art.draw_effects(offset): return
 	var col=Color("ffe291") if g.saber_tier==2 else (Color("b8ffeb") if g.saber_tier==1 else g.CYAN)
 	if g.saber_charge>0:
 		var pose=sword_pose(g.player+offset,g.walk_phase)

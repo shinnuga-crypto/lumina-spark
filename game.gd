@@ -62,6 +62,7 @@ var saber_recovery = 0.07
 var saber_prepare_weight = 0.0
 var landing_time = 0.0
 var hero_actions
+var action_art
 var rig_tint = Color.WHITE
 const SABER_REACH = [140.0,150.0,220.0]
 # Drawn slashes sweep a front arc (local angles, 0 = forward, + = down) per hit round:
@@ -325,6 +326,7 @@ func _ready():
 	build_level()
 	campaign=load("res://campaign.gd").new(self)
 	hero_actions=load("res://hero_actions.gd").new(self)
+	action_art=load("res://action_art.gd").new(self)
 	fixed_seed = OS.get_cmdline_user_args().size()>0
 	if "--self-test" in OS.get_cmdline_user_args():
 		muted = true
@@ -1494,7 +1496,9 @@ func update_bullets(dt: float):
 			if b.get("bomb",false):
 				b.v.y += 520*dt
 				if on_ground(b.p.x,b.p.y+b.r) and b.v.y>0:
-					for side in [-1,1]: add_enemy_bullet(b.p-Vector2(0,b.r+4),Vector2(side*210,0),7)
+					for side in [-1,1]:
+						add_enemy_bullet(b.p-Vector2(0,b.r+4),Vector2(side*210,0),7)
+						bullets[-1].floor_fire=true
 					burst(b.p,Color("ffb35a"),10)
 					bullets.remove_at(i)
 					continue
@@ -1741,6 +1745,7 @@ func _draw():
 			campaign.draw_beam_shape(x,false,140.0,610.0,clampf((1.5-ray.t)/1.05,0,1),width,ray.t>0.45,Color("ff4fa8"))
 			if ray.t>0.45: txt(Vector2(x-17,180),"▼",24,PINK)
 	for b in bullets:
+		if action_art.draw_projectile(b,offset): continue
 		if not b.enemy and b.damage>=7:
 			if b.get("pierce",false): draw_circle(b.p+offset,36,Color(1,0.85,0.45,0.25))
 			var region=art.charge.regions[int(clock*18)%6]
@@ -2627,6 +2632,8 @@ func capture_motion():
 	get_tree().quit()
 
 func hero_visual() -> Dictionary:
+	var updated=action_art.hero_visual()
+	if not updated.is_empty(): return updated
 	if hurt_pose<=0:
 		if saber_time>0 and not saber_seq.is_empty():
 			var sprite_name="air_saber" if saber_kind=="air" or saber_air else "saber"

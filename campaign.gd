@@ -377,7 +377,8 @@ func draw():
 	else: draw_shaft(o)
 	for e in g.enemies:
 		if e.hp<=0 or not Rect2(camera-Vector2(100,100),Vector2(1480,920)).has_point(e.p): continue
-		actor(e.kind-7,e.p+o,Vector2(112,85),Color(2,2,2) if e.flash>0 else Color.WHITE,e.kind!=9 and e.p.x<g.player.x)
+		if e.get("raider",false): g.action_art.draw_raider(e,e.p+o)
+		else: actor(e.kind-7,e.p+o,Vector2(112,85),Color(2,2,2) if e.flash>0 else Color.WHITE,e.kind!=9 and e.p.x<g.player.x)
 		if e.shot<0.45: g.draw_arc(e.p+o,45,0,TAU,24,Color("ffb55f"),2)
 	for pickup in g.pickups: g.sprite(6,pickup+o,30)
 	if g.boss_active and (g.boss_hp>0 or g.state=="defeat"):
@@ -463,6 +464,7 @@ func draw_final_boss(o: Vector2):
 
 func draw_combat(o: Vector2):
 	for b in g.bullets:
+		if g.action_art.draw_projectile(b,o): continue
 		var col=Color("ff9a3c") if b.get("solid",false) else (g.PINK if b.enemy else g.CYAN)
 		if b.get("reflected",false): col=Color("ffe28a")
 		g.draw_line(b.p+o,b.p+o-b.v.normalized()*22,col,3)
@@ -518,6 +520,7 @@ func draw_beam(b: Dictionary, o: Vector2):
 # Screen-space drawing shared with stage 1: thin guide lines that close in on the line while
 # charging, then a huge layered column (glow, body, white core) with a flare where it lands.
 func draw_beam_shape(line: float, horizontal: bool, from: float, to: float, k: float, width: float, charging: bool, col: Color):
+	if g.action_art.draw_beam(line,horizontal,from,to,k,width,charging,col): return
 	var axis=func(along: float, across: float) -> Vector2: return Vector2(along,across) if horizontal else Vector2(across,along)
 	if charging:
 		var spread=lerpf(150,0,pow(k,1.6))

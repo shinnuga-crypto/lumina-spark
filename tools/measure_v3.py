@@ -63,5 +63,8 @@ for i in range(6):
  right=min(rw//3,int(xx.max())+4); bottom=min(rh//2,int(yy.max())+4)
  raid_regions.append([x+left,y+top,right-left,bottom-top])
 result['sets']['airraid']={'file':'assets/campaign/airraid-v3.png','regions':raid_regions}
-(ROOT/'assets/motion/v3-regions.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+result['sets']['slash']={'file':'assets/motion/slash-vfx-v3.png',
+ 'regions':[[0,0,744,644],[745,0,518,644],[0,646,744,599],[745,646,518,599]],
+ 'pivot':[[330,330],[280,330],[330,300],[280,300]],'radius':[370,230,370,230]}
+(ROOT/'assets/motion/v3-regions.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
 print('Saved v3-regions.json; source images unchanged')

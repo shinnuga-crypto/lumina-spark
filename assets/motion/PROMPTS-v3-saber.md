@@ -2,11 +2,11 @@
 
 2026-10-25 GPT。組み込み image_gen、透明背景。参照画像は既存キャラクターのデザイン参照。生成原画をそのまま保存し、領域・アンカーはメタデータで指定する。
 
-## 地上6コマ（ground-v3.png）
+## 地上6コマの初回候補（ground-v3-candidate.png）
 
 参照: assets/motion/seed.png
 
-+Create a production-ready transparent RGBA sprite atlas for the exact anime heroine in the reference, a pink bob-haired star-clip girl in white/teal/gold sci-fi armor, teal eyes, chunky boots. Preserve her recognizable face, outfit and proportions. She faces screen RIGHT in EVERY cell. Anatomical LEFT arm is the arm cannon on the FAR side behind her torso; anatomical RIGHT near hand holds a cyan energy saber. Do not swap arms. Use the reference as character design, NOT as a pose to repeat.
+Create a production-ready transparent RGBA sprite atlas for the exact anime heroine in the reference, a pink bob-haired star-clip girl in white/teal/gold sci-fi armor, teal eyes, chunky boots. Preserve her recognizable face, outfit and proportions. She faces screen RIGHT in EVERY cell. Anatomical LEFT arm is the arm cannon on the FAR side behind her torso; anatomical RIGHT near hand holds a cyan energy saber. Do not swap arms. Use the reference as character design, NOT as a pose to repeat.
 Canvas: landscape 3 columns by 2 rows, EXACTLY SIX equal square cells, read left to right then next row. Transparent background, no grid, no labels, no scenery, no floor, no shadows, no ambient haze or rectangular glow. Each full figure and every blade tip and energy trail must be wholly contained in its OWN cell with generous transparent margins. At least 35px transparent gutter on every side of each cell. Same skull size and same planted foot baseline throughout. Characters about 36 percent of a cell's height, positioned slightly LEFT of cell center so big forward arcs fit. All six heads SAME size; do not zoom frames. Clean crisp polished hand-painted anime game sprites, dark readable contour, material shading like reference, no pixel-art filter.
 Frame 1: low wide grounded wind-up, saber raised behind and above head, no energy trail. Frame 2: instantaneous powerful DOWNWARD strike already at finish, saber angled front-down, deep forward lunge, front knee bent, rear leg stretched and heel raised, torso leaning into it. A broad luminous cyan CRESCENT traces from above her head around the FRONT/right side to foot level; clear white bright edge and a translucent interior, entirely inside cell. Frame 3: same downward follow-through held low, small fading short trail only. Frame 4: second wind-up, saber drawn down/back ready to slash UP, no trail. Frame 5: forceful upward finish, near arm and saber raised diagonally forward-up, a broad cyan crescent from front-bottom to front-top, body drives upward. Frame 6: ready stance returning to guard, saber lowered forward, cannon relaxed far behind silhouette, no trail. The blade itself is the SAME short length in all frames. Only the arc is large. Show clear contact poses, not six similar idle poses. Maintain exact costume, body scale, facing and anchor; all body parts remain visible.
 
@@ -62,3 +62,13 @@ Re-layout this exact FOUR-frame AIRBORNE charged slash atlas into a clean 2x2 ga
 ## 組み込み
 
 原画の画素は変更せず、v3-regions.jsonで矩形、頭の寸法に基づく倍率、足元/腰アンカー、銃口を指定。全コマを同じ頭寸法に補正する。最大溜め地上の下段は金色の軌跡全体を収めるため、512/768の固定幅ではなく測定した領域を使用。候補は保持し、配布から除外する。
+
+## 独立した斬撃エフェクト4領域（slash-vfx-v3.png）
+
+新規生成・参照なし。大きな金色の斬撃はこの素材を実リーチに合わせて描画し、人物の頭を拡大しない。
+
+A production animation VFX sprite atlas, transparent RGBA. Exactly TWO columns by TWO rows, FOUR equal square cells. No characters, no swords, no scenery, no floor, no text/grid, no rectangular haze. Four isolated ENERGY SLASH CRESCENTS. Every tip entirely inside its own square with generous empty alpha padding. The empty center/attack pivot is the CENTER of each cell. Each crescent is on the RIGHT side of that center, opens toward LEFT, sweeping from top-left over the top and around the RIGHT/front side to bottom-right, a powerful forward down-cut. The rightmost leading bright cutting edge lies about 40% of cell width to the right of center. Space on LEFT mostly empty. Thin pointed start/end, a thick curved white-hot leading edge and many tapered trailing filaments, readable strong crescent, NOT a full circle/ring, NOT a shield/bubble, NOT a flat disk. Do not fill the central empty space. Lively organic curved slashing motion with sharp spikes following the arc, high-impact anime game effect. Tight localized glow, literal transparent empty background.
+TOP LEFT: huge GOLDEN charged slash at peak impact: rich saturated gold and amber body, brilliant ivory-white cutting edge, multiple long sharp tapered gold streaks following the same arc. Broad energetic brush-stroke body, thinner at both ends. TOP RIGHT: golden slash recovery/fade, broken tapering golden strips and a few sparks tracing the SAME forward crescent, fewer fragments, fading cleanly.
+BOTTOM LEFT: CYAN normal downward slash, same forward-facing crescent shape and pivot, vivid turquoise body and white cutting rim, fewer streaks and thinner body than gold. BOTTOM RIGHT: CYAN upward slash, same forward crescent but the sharp active end is at the top and the tapering motion trails run from bottom toward top. All four share same scale and exact pivot/placement. Crisp detailed energy brushwork with generous empty gutters; no cropped filaments. Render game-ready sprites, not icons.
+
+ビーム・爆撃素材の生成全文: [PROMPTS-vfx-v3.md](../campaign/PROMPTS-vfx-v3.md)
