@@ -64,7 +64,7 @@ var landing_time = 0.0
 var hero_actions
 var action_art
 var rig_tint = Color.WHITE
-const SABER_REACH = [140.0,150.0,220.0]
+const SABER_REACH = [140.0,180.0,220.0]
 # Drawn slashes sweep a front arc (local angles, 0 = forward, + = down) per hit round:
 # an overhead cut down through the front, and the double's second cut sweeping back up.
 const SWEEP_GROUND = [[-2.1,1.0],[1.0,-1.3]]
@@ -91,6 +91,9 @@ const SEQ_DOUBLE = [[0,0.03,0],[3,0.06,1],[4,0.06,0],[5,0.035,0],[2,0.06,2],[4,0
 var saber_seq: Array = []
 var saber_round = 0
 var saber_hold = -1.0
+var saber_wave_tier = -1
+var saber_wave_fired = false
+var fire_charge_spent = false
 var parries = 0
 var font: Font
 var atlas: Texture2D
@@ -895,6 +898,7 @@ func update_game(dt: float):
 	combo_timer=maxf(0,combo_timer-dt)
 	if combo_timer<=0: combo=0
 	saber_time = maxf(0,saber_time-dt)
+	if saber_time<=0: saber_wave_tier=-1; saber_wave_fired=false
 	landing_time=maxf(0,landing_time-dt)
 	saber_buffer=maxf(0,saber_buffer-dt)
 	if saber_buffer<=0: saber_pending=-1
@@ -936,12 +940,19 @@ func update_game(dt: float):
 	if fire_buffer>0 and shot_timer<=0 and saber_time<=0:
 		shot_request = 0
 		fire_buffer = 0
-	if fire: charge = minf(FULL_CHARGE,charge+dt)
+	if fire:
+		if not fire_charge_spent: charge = minf(FULL_CHARGE,charge+dt)
 	elif prev_fire:
 		if charge>=0.8: charge_release = 2 if charge>=FULL_CHARGE else 1
+		if charge>=0.8 and saber_charge_level()>0 and saber_time<=0:
+			# Either release order can trigger the combined move; spend the held saber too.
+			saber_pending=saber_charge_level(); saber_buffer=0.16
+			saber_prepare_weight=smoothstep(0,0.16,saber_charge)
+			saber_charge=0; saber_hold=-1.0
 		charge = 0
+	if not fire: fire_charge_spent=false
 	# A charge let go mid-swing fires the moment the swing ends.
-	if charge_release>=0 and saber_time<=0 and hurt_pose<=0:
+	if charge_release>=0 and saber_time<=0 and hurt_pose<=0 and saber_pending<=0:
 		shot_request = charge_release
 		charge_release = -1
 	prev_fire = fire
@@ -1084,12 +1095,13 @@ func update_game(dt: float):
 		if dash_timer>0: saber_kind="dash"
 		elif saber_kind=="ground" and not grounded: saber_kind="air"
 	# A charged release is not held back by the cooldown of the tap that started the hold.
-	if saber_pending>=0 and saber_buffer>0 and saber_time<=0 and (saber_cooldown<=0 or saber_pending>0) and hurt_pose<=0: begin_saber(saber_pending)
+	if saber_pending>=0 and saber_buffer>0 and (saber_time<=0 or (saber_pending>0 and saber_tier==0 and saber_time<=saber_recovery)) and (saber_cooldown<=0 or saber_pending>0) and hurt_pose<=0: begin_saber(saber_pending)
 	# A just dodge loads the next shot as a full charge.
 	if shot_request==0 and dodge_charge>0:
 		shot_request = 2
 		dodge_charge = 0
 	update_aim()
+	if saber_wave_tier>=0: shot_request=-1
 	if shot_request>=0:
 		if saber_time>0: charge_release=maxi(charge_release,shot_request)
 		else: shoot(shot_request>=1,shot_request==2)
@@ -2353,7 +2365,7 @@ func motion_test():
 	test_key(KEY_RIGHT,false)
 	test_key(KEY_V,false)
 	update_game(1.0/60)
-	# A press slashes at once; the charge only shows after the delay and a short hold releases nothing.
+	# A press slashes at once; releasing after the delay now gives the first charge.
 	test_key(KEY_K,true)
 	update_game(1.0/60)
 	if saber_time<=0 or saber_charge>0: errors.append("saber press slashes at once")
@@ -2361,7 +2373,7 @@ func motion_test():
 	if saber_time>0 or saber_charge<CHARGE_DELAY: errors.append("held saber charges after the tap")
 	test_key(KEY_K,false)
 	update_game(1.0/60)
-	if saber_time>0 or saber_pending>=0: errors.append("short hold releases nothing")
+	if saber_time<=0 or saber_tier!=1: errors.append("first charge releases after the delay")
 	begin_saber(0)
 	test_key(KEY_K,false)
 	bullets.clear()
@@ -2873,6 +2885,7 @@ func reset_saber_action():
 	saber_prepare_weight=0
 	charge_release=-1
 	saber_seq=[]; saber_round=0; saber_hold=-1.0
+	saber_wave_tier=-1; saber_wave_fired=false; fire_charge_spent=false
 
 func read_saber_input(dt: float):
 	var held=act("saber")
@@ -2890,9 +2903,9 @@ func read_saber_input(dt: float):
 			if saber_hold>=CHARGE_DELAY and hurt_pose<=0:
 				var old=saber_charge
 				saber_charge=minf(FULL_CHARGE,saber_hold)
-				if (old<0.8 and saber_charge>=0.8) or (old<FULL_CHARGE and saber_charge>=FULL_CHARGE): sound("charge")
+				if (old<CHARGE_DELAY and saber_charge>=CHARGE_DELAY) or (old<FULL_CHARGE and saber_charge>=FULL_CHARGE): sound("charge")
 	elif prev_saber:
-		if hurt_pose<=0 and saber_charge>=0.8:
+		if hurt_pose<=0 and saber_charge>=CHARGE_DELAY-0.001:
 			saber_prepare_weight=smoothstep(0,0.16,saber_charge)
 			saber_pending=2 if saber_charge>=FULL_CHARGE-0.001 else 1
 			saber_buffer=0.16
@@ -2902,6 +2915,12 @@ func read_saber_input(dt: float):
 
 func begin_saber(tier: int):
 	saber_tier=clampi(tier,0,2)
+	saber_wave_tier=-1; saber_wave_fired=false
+	var gun_tier=maxi(2 if charge>=FULL_CHARGE-0.001 else (1 if charge>=0.8 else -1),charge_release)
+	if saber_tier>0 and gun_tier>0:
+		saber_wave_tier=2 if saber_tier==2 and gun_tier==2 else 1
+		charge=0; charge_release=-1; fire_buffer=0
+		fire_charge_spent=act("fire")
 	saber_kind="dash" if dash_timer>0 else ("ground" if grounded else "air")
 	saber_air=not grounded
 	saber_seq=[]
@@ -2947,9 +2966,17 @@ func saber_active() -> bool:
 func saber_just() -> bool:
 	return saber_active() and saber_total-saber_time<saber_startup+(DANMAKU_JUST_WINDOW if danmaku else JUST_WINDOW)
 
+func saber_charge_level() -> int:
+	return 2 if saber_charge>=FULL_CHARGE-0.001 else (1 if saber_charge>=CHARGE_DELAY-0.001 else 0)
+
+func saber_blade_length() -> float:
+	var tier=saber_tier if saber_time>0 else saber_charge_level()
+	return 76.0 if tier==2 else 42.0
+
 func saber_status() -> String:
+	if saber_charge_level()>0 and (charge>=0.8 or charge_release>0): return "合成MAX / 離す" if saber_charge_level()==2 and (charge>=FULL_CHARGE-0.001 or charge_release==2) else "飛翔斬撃 / 離す"
 	if saber_charge>=FULL_CHARGE-0.001: return "MAX / 離す"
-	if saber_charge>=0.8: return "溜め / 離す"
+	if saber_charge>=CHARGE_DELAY-0.001: return "溜め / 離す"
 	if saber_charge>0: return "溜め中"
 	return "READY" if saber_cooldown<=0 else "…"
 
@@ -2958,7 +2985,6 @@ func saber_reach() -> float:
 
 func saber_rect() -> Rect2:
 	var reach=saber_reach()
-	if saber_kind=="air": return Rect2(player-Vector2(reach,reach+55),Vector2(reach*2,reach*2))
 	return Rect2(player+Vector2(0 if saber_facing>0 else -reach,-102 if saber_kind=="dash" else -55-reach),Vector2(reach,80 if saber_kind=="dash" else reach*2))
 
 # The current sweep of a drawn slash: start/now angles, how far through the stroke, and the fade after it.
@@ -2986,7 +3012,7 @@ func slash_sweep() -> Dictionary:
 	return result
 
 func saber_contacts(target: Rect2) -> bool:
-	if not saber_seq.is_empty():
+	if not saber_seq.is_empty() and saber_kind!="dash":
 		# Only what the blade has swept so far is hit: aim the arc at the shot.
 		var sweep=slash_sweep()
 		if sweep.is_empty(): return false
@@ -3009,8 +3035,18 @@ func saber_contacts(target: Rect2) -> bool:
 func saber_catches(point: Vector2, radius: float) -> bool:
 	return saber_contacts(Rect2(point-Vector2.ONE*radius,Vector2.ONE*maxf(1,radius*2)))
 
+func emit_saber_wave():
+	var tier=saber_wave_tier
+	if tier<1 or saber_wave_fired: return
+	saber_wave_fired=true
+	bullets.append({"p":player+Vector2(saber_facing*24,-55),"v":Vector2(saber_facing*(700 if tier==2 else 620),0),"enemy":false,
+		"damage":30 if tier==2 else 14,"r":58.0 if tier==2 else 44.0,"life":1.15 if tier==2 else 0.95,"pierce":true,"hits":[],"slash_wave":tier})
+	popup(player-Vector2(0,105),"MAX 飛翔斬撃" if tier==2 else "飛翔斬撃",Color("ffe28a") if tier==2 else CYAN)
+	sound("charge")
+
 func update_saber():
 	if not saber_active(): return
+	emit_saber_wave()
 	if stage>1: campaign.saber_devices()
 	# The double slash may hit each target once per swing.
 	var hit_round=saber_segment()[1] if not saber_seq.is_empty() else 1

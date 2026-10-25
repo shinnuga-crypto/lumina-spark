@@ -10,7 +10,7 @@ func fresh():
 	g.player=Vector2(400,610); g.grounded=true; g.velocity=Vector2.ZERO; g.facing=1; g.aim_override=Vector2.ZERO
 func run():
 	g=load("res://game.gd").new(); root.add_child(g)
-	check(g.action_art.textures.size()==8,"eight atlas textures load")
+	check(g.action_art.textures.size()==9,"nine atlas textures load")
 	var count=0
 	for key in g.action_art.sets:
 		var info=g.action_art.sets[key]
@@ -19,7 +19,7 @@ func run():
 			var r=f.region if f is Dictionary else f
 			check(r[0]>=0 and r[1]>=0 and r[0]+r[2]<=size.x and r[1]+r[3]<=size.y,"region stays in atlas "+key)
 			count+=1
-	check(count==50,"24 character frames and 26 VFX/airraid regions")
+	check(count==56,"24 character frames and 32 VFX/airraid regions")
 	for airborne in [false,true]:
 		for tier in range(3):
 			fresh(); g.grounded=not airborne; g.begin_saber(tier)
@@ -41,7 +41,7 @@ func run():
 	g.aim_override=Vector2.ZERO; g.begin_saber(2)
 	check(g.hero_visual().v3=="dash" and g.hero_visual().frame==3,"dash slash has its own thrust art")
 	fresh(); g.saber_charge=1.6
-	check(g.hero_visual().v3=="heavy" and g.hero_visual().frame==0,"stationary drawn charge")
+	check(not g.hero_visual().has("texture") and g.saber_blade_length()==76,"stationary MAX keeps shared rig and long blade")
 	g.aim_override=Vector2.UP; g.aim_time=0.3; g.update_aim()
 	check(not g.hero_visual().has("texture"),"aim while charging keeps independent cannon")
 	fresh(); g.enemy_shot(Vector2(600,400),Vector2.DOWN*80,11,"bomb")
@@ -49,6 +49,7 @@ func run():
 	g.enemy_shot(Vector2(600,400),Vector2.LEFT*80,8,"solid")
 	check(g.action_art.projectile_frame(g.bullets[-1])<0,"ordinary solid shots keep spike appearance")
 	fresh(); g.grounded=false; g.begin_saber(2); g.saber_time=g.saber_total-g.saber_startup-0.025
-	check(g.saber_catches(g.player+Vector2(-170,-55),6) and g.saber_catches(g.player+Vector2(170,-55),6),"air MAX retains both-side reach for returning golden arc")
+	check(not g.saber_catches(g.player+Vector2(-170,-55),6) and g.saber_catches(g.player+Vector2(170,-55),6),"air MAX only cuts the forward side")
 	print("ART V3 TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
+	g.queue_free(); await process_frame; g=null; await process_frame
 	quit(0 if errors.is_empty() else 1)

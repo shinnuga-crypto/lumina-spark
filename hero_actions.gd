@@ -152,9 +152,8 @@ func sword_pose(at: Vector2, phase: float) -> Dictionary:
 	var local=Vector2.RIGHT.rotated(sword_angle())
 	var direction=Vector2(local.x*g.facing,local.y)
 	# The blade keeps its size; a full charge shows its reach through the afterimage instead.
-	var length=76.0+(12.0 if g.saber_tier==2 else 0.0)
-	if g.saber_time<=0: length=76.0
-	elif progress_override<0:
+	var length=g.saber_blade_length()
+	if g.saber_time>0 and progress_override<0:
 		# The beam ignites as the swing starts instead of hanging out at full length in the wind-up.
 		length*=lerpf(0.35,1.0,smoothstep(0,g.saber_startup+0.02,swing_elapsed()))
 	return {"hand":hand,"direction":direction,"length":length,"tip":hand+direction*length}
@@ -179,7 +178,7 @@ func draw_effects(offset: Vector2):
 	var col=Color("ffe291") if g.saber_tier==2 else (Color("b8ffeb") if g.saber_tier==1 else g.CYAN)
 	if g.saber_charge>0:
 		var pose=sword_pose(g.player+offset,g.walk_phase)
-		var tier=2 if g.saber_charge>=g.FULL_CHARGE-0.001 else (1 if g.saber_charge>=0.8 else 0)
+		var tier=g.saber_charge_level()
 		var charge_col=Color("ffe291") if tier==2 else (g.CYAN if tier==1 else g.PINK)
 		g.draw_arc(pose.hand,14+g.saber_charge*6,g.clock*4,g.clock*4+TAU*g.saber_charge/g.FULL_CHARGE,32,charge_col,2+tier)
 		if tier>0: g.draw_circle(pose.hand,22+sin(g.clock*14)*3,Color(charge_col,0.16))

@@ -29,9 +29,8 @@ func hero_visual() -> Dictionary:
 		var elapsed=g.saber_total-g.saber_time
 		var frame=0 if elapsed<g.saber_startup*0.55 else (1 if elapsed<g.saber_startup else (2 if elapsed<g.saber_startup+0.015 else 3))
 		return visual("heavy-air" if airborne else "heavy",frame,action)
-	# During aim the rig keeps arbitrary-angle cannon control. A stationary charge can use art.
-	if g.saber_charge>0 and not g.walk_aiming() and (not g.grounded or absf(g.velocity.x)<15):
-		return visual("heavy" if g.grounded else "heavy-air",0,"saber_charge")
+	# All held charges use one rig, so idle/running/air never switch blade scale.
+	if g.saber_charge>0: return {}
 	if g.dash_timer>0:
 		if g.walk_aiming():
 			# Horizontal fire uses its own drawn pose, other angles keep the shoulder/elbow rig.
@@ -45,7 +44,7 @@ func draw_effects(offset: Vector2) -> bool:
 	if v.is_empty(): return false
 	if g.saber_charge>0:
 		var hand=g.player+offset+Vector2(-28*g.facing,-50)
-		var tier=2 if g.saber_charge>=g.FULL_CHARGE-0.001 else (1 if g.saber_charge>=0.8 else 0)
+		var tier=g.saber_charge_level()
 		var col=Color("ffe291") if tier==2 else (g.CYAN if tier==1 else g.PINK)
 		g.draw_arc(hand,14+g.saber_charge*6,g.clock*4,g.clock*4+TAU*g.saber_charge/g.FULL_CHARGE,32,col,2+tier)
 	# The independent charged smear covers the actual reach without scaling up the heroine.
@@ -54,26 +53,44 @@ func draw_effects(offset: Vector2) -> bool:
 
 func draw_reach_rim(at: Vector2):
 	if g.saber_kind=="dash":
-		if g.saber_active(): g.draw_line(at+Vector2(g.facing*55,-57),at+Vector2(g.facing*g.saber_reach(),-57),Color(g.CYAN,0.65),3)
+		draw_lance(at)
 		return
-	if g.saber_tier<2 or not g.saber_active(): return
+	if g.saber_tier<1 or not g.saber_active(): return
 	var elapsed=g.saber_total-g.saber_time-g.saber_startup
 	var fade=1-clampf(elapsed/maxf(0.01,g.saber_total-g.saber_startup-g.saber_recovery),0,1)
-	var r=region("slash",0)
-	var point=sets.slash.pivot[0]
+	if not g.saber_seq.is_empty(): fade=g.slash_sweep().get("fade",0.0)
+	var index=0 if g.saber_tier==2 else 2
+	var r=region("slash",index)
+	var point=sets.slash.pivot[index]
 	var pivot=Vector2(point[0],point[1])
-	var scale=g.saber_reach()/sets.slash.radius[0]
-	if g.saber_kind=="air":
-		# The existing airborne MAX hit covers both sides. Show the returning arc too.
-		g.draw_set_transform(at-Vector2(0,55),0,Vector2(-g.facing,1))
-		g.draw_texture_rect_region(textures.slash,Rect2(-pivot*scale,r.size*scale),r,Color(1,1,1,fade*0.72))
-	g.draw_set_transform(at-Vector2(0,55),0,Vector2(g.facing,1))
-	g.draw_texture_rect_region(textures.slash,Rect2(-pivot*scale,r.size*scale),r,Color(1,1,1,fade))
+	var scale=g.saber_reach()/sets.slash.radius[index]
+	var vertical=-1 if g.saber_tier==1 and g.saber_segment()[1]==2 else 1
+	g.draw_set_transform(at-Vector2(0,55),0,Vector2(g.facing,vertical))
+	g.draw_texture_rect_region(textures.slash,Rect2(-pivot*scale,r.size*scale),r,Color(1,1,1,fade*(0.72 if g.saber_tier==1 else 1)))
 	g.draw_set_transform(Vector2.ZERO)
 
 func region(set_name: String, index: int) -> Rect2:
 	var r=sets[set_name].regions[index]
 	return Rect2(r[0],r[1],r[2],r[3])
+
+func draw_lance(at: Vector2):
+	var elapsed=g.saber_total-g.saber_time
+	if elapsed<g.saber_startup*0.45: return
+	var grow=smoothstep(g.saber_startup*0.45,g.saber_startup,elapsed)
+	var fade=smoothstep(0,g.saber_recovery,g.saber_time)
+	var index=g.saber_tier+(3 if g.saber_time<g.saber_recovery else 0)
+	var length=maxf(1,g.saber_reach()-60)*grow
+	var height=[8.0,22.0,48.0][g.saber_tier]*lerpf(0.5,1,grow)
+	g.draw_set_transform(at+Vector2(g.saber_facing*60,-55),0,Vector2(g.saber_facing,1))
+	g.draw_texture_rect_region(textures.lance,Rect2(0,-height/2,length,height),region("lance",index),Color(1,1,1,fade))
+	g.draw_set_transform(Vector2.ZERO)
+
+func draw_saber_wave(b: Dictionary, offset: Vector2):
+	var size=Vector2(b.r*3.5,b.r*3.0)
+	var index=0 if b.slash_wave==2 else 2
+	g.draw_set_transform(b.p+offset,b.v.angle())
+	g.draw_texture_rect_region(textures.slash,Rect2(-size.x*0.80,-size.y/2,size.x,size.y),region("slash",index),Color(1,1,1,minf(1,b.life*5)))
+	g.draw_set_transform(Vector2.ZERO)
 
 func sprite(set_name: String, index: int, center: Vector2, size: Vector2, tint=Color.WHITE):
 	g.draw_texture_rect_region(textures[set_name],Rect2(center-size/2,size),region(set_name,index),tint)
@@ -93,6 +110,9 @@ func projectile_frame(b: Dictionary) -> int:
 	return -1
 
 func draw_projectile(b: Dictionary, offset: Vector2) -> bool:
+	if b.get("slash_wave",0)>0:
+		draw_saber_wave(b,offset)
+		return true
 	var index=projectile_frame(b)
 	if index<0: return false
 	if index==3:

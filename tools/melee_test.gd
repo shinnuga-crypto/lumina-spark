@@ -32,7 +32,7 @@ func run():
 		press(KEY_K,false); step(1)
 		check(g.saber_tier==tier and g.saber_time>0,"release selects charge tier %d"%tier)
 		if tier>0: check(g.walk_arm(0,false).muzzle.distance_to(prep)<12,"charged pose flows into release")
-		check(g.saber_reach()==[140.0,150.0,220.0][tier],"tier reach")
+		check(g.saber_reach()==[140.0,180.0,220.0][tier],"tier reach")
 		g.saber_time=g.saber_total-g.saber_startup-0.025
 		g.spawn_enemy(g.player+Vector2(g.saber_reach()-8,0),0,0); var enemy=g.enemies[-1]; enemy.hp=100
 		g.update_saber(); g.update_saber()

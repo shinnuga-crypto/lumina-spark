@@ -66,5 +66,16 @@ result['sets']['airraid']={'file':'assets/campaign/airraid-v3.png','regions':rai
 result['sets']['slash']={'file':'assets/motion/slash-vfx-v3.png',
  'regions':[[0,0,744,644],[745,0,518,644],[0,646,744,599],[745,646,518,599]],
  'pivot':[[330,330],[280,330],[330,300],[280,300]],'radius':[370,230,370,230]}
+image=Image.open(ROOT/'assets/motion/lance-v4.png')
+lw,lh=image.size
+cuts=[0,640,1350,lw]; lance=[]
+for i in range(6):
+ x0=cuts[i%3]; x1=cuts[i%3+1]; y0=(i//3)*lh//2; y1=(i//3+1)*lh//2
+ a=np.asarray(image.crop((x0,y0,x1,y1)))
+ yy,xx=np.where(a[:,:,3]>90)
+ left=max(0,int(xx.min())-4); top=max(0,int(yy.min())-4)
+ right=min(x1-x0,int(xx.max())+5); bottom=min(y1-y0,int(yy.max())+5)
+ lance.append([x0+left,y0+top,right-left,bottom-top])
+result['sets']['lance']={'file':'assets/motion/lance-v4.png','regions':lance}
 (ROOT/'assets/motion/v3-regions.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
 print('Saved v3-regions.json; source images unchanged')
