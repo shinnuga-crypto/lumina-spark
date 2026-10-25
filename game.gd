@@ -135,8 +135,9 @@ const ACTIONS = ["left","right","down","jump","fire","saber","dash"]
 const ACTION_NAMES = {"left":"左へ移動","right":"右へ移動","down":"下（足場から降りる・急降下）","jump":"ジャンプ","fire":"射撃（長押しでため撃ち）","saber":"セーバー","dash":"ダッシュ"}
 const PAD_LT = 100
 const PAD_RT = 101
+const PAD_SLOT_COUNT = 4
 const DEFAULT_KEYS = {"left":[KEY_LEFT,KEY_A],"right":[KEY_RIGHT,KEY_D],"down":[KEY_DOWN,KEY_S],"jump":[KEY_SPACE,KEY_Z],"fire":[KEY_X,KEY_J,KEY_V],"saber":[KEY_K],"dash":[KEY_SHIFT,KEY_C]}
-const DEFAULT_PAD = {"left":[JOY_BUTTON_DPAD_LEFT],"right":[JOY_BUTTON_DPAD_RIGHT],"down":[JOY_BUTTON_DPAD_DOWN],"jump":[JOY_BUTTON_A],"fire":[JOY_BUTTON_X,JOY_BUTTON_Y],"saber":[JOY_BUTTON_RIGHT_SHOULDER],"dash":[JOY_BUTTON_B]}
+const DEFAULT_PAD = {"left":[JOY_BUTTON_DPAD_LEFT],"right":[JOY_BUTTON_DPAD_RIGHT],"down":[JOY_BUTTON_DPAD_DOWN],"jump":[JOY_BUTTON_A],"fire":[JOY_BUTTON_X,JOY_BUTTON_Y,PAD_RT],"saber":[JOY_BUTTON_RIGHT_SHOULDER],"dash":[JOY_BUTTON_B]}
 var key_binds: Dictionary = {}
 var pad_binds: Dictionary = {}
 var using_pad = false
@@ -145,6 +146,7 @@ var sfx_level = 5
 var settings_path = "user://settings.cfg"
 var settings_from = "title"
 var settings_index = 0
+var settings_column = 0 # keyboard, then controller slots 1..4
 var rebinding = ""
 var settings_note = ""
 var stick_nav: Dictionary = {}
@@ -455,12 +457,13 @@ func joy(button: int) -> bool:
 
 # --- Rebindable controls, volume and the settings screen ---
 func joy_any(button: int) -> bool:
+	if button<0: return false
 	if button==PAD_LT: return Input.get_joy_axis(0,JOY_AXIS_TRIGGER_LEFT)>0.5
 	if button==PAD_RT: return Input.get_joy_axis(0,JOY_AXIS_TRIGGER_RIGHT)>0.5
 	return joy(button)
 
 func act(name: String) -> bool:
-	if name=="fire" and (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.get_joy_axis(0,JOY_AXIS_TRIGGER_RIGHT)>0.5): return true
+	if name=="fire" and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT): return true
 	for code in key_binds[name]:
 		if key(code): return true
 	for button in pad_binds[name]:
@@ -474,14 +477,15 @@ func key_name(code: int) -> String:
 
 func pad_name(button: int) -> String:
 	var names = {JOY_BUTTON_A:"A",JOY_BUTTON_B:"B",JOY_BUTTON_X:"X",JOY_BUTTON_Y:"Y",JOY_BUTTON_LEFT_SHOULDER:"LB",JOY_BUTTON_RIGHT_SHOULDER:"RB",JOY_BUTTON_LEFT_STICK:"L3",JOY_BUTTON_RIGHT_STICK:"R3",JOY_BUTTON_DPAD_UP:"十字↑",JOY_BUTTON_DPAD_DOWN:"十字↓",JOY_BUTTON_DPAD_LEFT:"十字←",JOY_BUTTON_DPAD_RIGHT:"十字→",PAD_LT:"LT",PAD_RT:"RT"}
-	return names.get(button,"パッド%d"%button)
+	return names.get(button,"BTN %d"%button)
 
 # The label for an action on whichever device the player touched last.
 func lbl(name: String) -> String:
 	var parts: Array[String] = []
 	if using_pad:
 		if name in ["left","right","down"]: return {"left":"←","right":"→","down":"↓"}[name]+"（十字／スティック）"
-		for button in pad_binds[name]: parts.append(pad_name(button))
+		for button in pad_binds[name]:
+			if button>=0: parts.append(pad_name(button))
 	else:
 		for code in key_binds[name]: parts.append(key_name(code))
 	return " / ".join(parts) if not parts.is_empty() else "未設定"
@@ -514,22 +518,38 @@ func load_settings():
 	if settings_testing(): return
 	var cfg = ConfigFile.new()
 	if cfg.load(settings_path)!=OK: return
+	apply_settings_config(cfg)
+
+func apply_settings_config(cfg: ConfigFile):
+	reset_bindings()
 	bgm_level = clampi(int(cfg.get_value("audio","bgm",5)),0,10)
 	sfx_level = clampi(int(cfg.get_value("audio","sfx",5)),0,10)
 	for name in ACTIONS:
-		var keys = cfg.get_value("keys",name,null)
+		var keys = cfg.get_value("keys",name,key_binds[name])
 		if keys is Array: key_binds[name] = keys.map(func(v): return int(v))
-		var pads = cfg.get_value("pad",name,null)
-		if pads is Array and not name in ["left","right","down"]: pad_binds[name] = pads.map(func(v): return int(v))
+		var pads = cfg.get_value("pad",name,pad_binds[name])
+		if pads is Array and not name in ["left","right","down"]: pad_binds[name] = pads.slice(0,PAD_SLOT_COUNT).map(func(v): return int(v))
+	# Older versions fired RT unconditionally. Preserve that default unless it was assigned elsewhere.
+	if int(cfg.get_value("input","pad_slots_format",1))<2:
+		var elsewhere=false
+		for name in ACTIONS:
+			if name!="fire" and PAD_RT in pad_binds[name]: elsewhere=true
+		if elsewhere: pad_binds.fire=pad_binds.fire.filter(func(b): return b!=PAD_RT)
+		elif not PAD_RT in pad_binds.fire and pad_binds.fire.size()<PAD_SLOT_COUNT: pad_binds.fire.append(PAD_RT)
 
-func save_settings():
-	if settings_testing(): return
-	var cfg = ConfigFile.new()
+func settings_config() -> ConfigFile:
+	var cfg=ConfigFile.new()
+	cfg.set_value("input","pad_slots_format",2)
 	cfg.set_value("audio","bgm",bgm_level)
 	cfg.set_value("audio","sfx",sfx_level)
 	for name in ACTIONS:
 		cfg.set_value("keys",name,key_binds[name])
 		cfg.set_value("pad",name,pad_binds[name])
+	return cfg
+
+func save_settings():
+	if settings_testing(): return
+	var cfg = settings_config()
 	cfg.save(settings_path)
 
 func settings_rows() -> Array:
@@ -538,6 +558,7 @@ func settings_rows() -> Array:
 func open_settings():
 	settings_from = state
 	settings_index = 0
+	settings_column=1 if using_pad else 0
 	rebinding = ""
 	settings_note = ""
 	state = "settings"
@@ -554,11 +575,32 @@ func bind_key(name: String, code: int):
 	rebinding = ""
 	settings_note = ACTION_NAMES[name]+" を "+key_name(code)+" にしました"
 
-func bind_pad(name: String, button: int):
-	for other in ACTIONS: pad_binds[other] = pad_binds[other].filter(func(b): return b!=button)
-	pad_binds[name] = [button]
+func trim_pad_slots(name: String):
+	while not pad_binds[name].is_empty() and pad_binds[name][-1]<0: pad_binds[name].pop_back()
+
+func pad_slot(name: String, slot: int) -> int:
+	return int(pad_binds[name][slot]) if slot<pad_binds[name].size() else -1
+
+func clear_pad_slot(name: String, slot: int):
+	if name in ["left","right","down"] or slot<0 or slot>=PAD_SLOT_COUNT: return
+	if slot<pad_binds[name].size(): pad_binds[name][slot]=-1
+	trim_pad_slots(name)
+	rebinding=""
+	settings_note=ACTION_NAMES[name]+" のパッド枠%dを解除しました"%(slot+1)
+
+func bind_pad(name: String, button: int, slot = 0):
+	if name in ["left","right","down"] or button in [JOY_BUTTON_DPAD_UP,JOY_BUTTON_DPAD_DOWN,JOY_BUTTON_DPAD_LEFT,JOY_BUTTON_DPAD_RIGHT]:
+		settings_note="十字キーは移動・照準に固定されています"
+		return
+	if slot<0 or slot>=PAD_SLOT_COUNT: return
+	for other in ACTIONS:
+		for i in range(pad_binds[other].size()):
+			if pad_binds[other][i]==button: pad_binds[other][i]=-1
+		trim_pad_slots(other)
+	while pad_binds[name].size()<=slot: pad_binds[name].append(-1)
+	pad_binds[name][slot]=button
 	rebinding = ""
-	settings_note = ACTION_NAMES[name]+" を "+pad_name(button)+" にしました"
+	settings_note = ACTION_NAMES[name]+" のパッド枠%dを "%[slot+1]+pad_name(button)+" にしました"
 
 func settings_activate(direction = 0):
 	var row = settings_rows()[settings_index]
@@ -579,7 +621,11 @@ func settings_activate(direction = 0):
 		"back":
 			if direction==0: close_settings()
 		_:
-			if direction==0:
+			if direction!=0:
+				settings_column=wrapi(settings_column+direction,0,PAD_SLOT_COUNT+1)
+			elif row in ["left","right","down"] and settings_column>0:
+				settings_note="パッドの方向は十字キーと左スティック、照準は右スティックで固定です"
+			else:
 				rebinding = row
 				settings_note = ""
 
@@ -591,14 +637,17 @@ func settings_input(event):
 	if rebinding!="":
 		if event is InputEventKey and event.pressed and not event.echo:
 			if event.physical_keycode==KEY_ESCAPE: rebinding = ""
+			elif settings_column>0:
+				if event.physical_keycode in [KEY_DELETE,KEY_BACKSPACE]: clear_pad_slot(rebinding,settings_column-1)
+				else: settings_note="選択したパッド枠に割り当てるボタンを押してください"
 			elif event.physical_keycode in [KEY_F11,KEY_M]: settings_note = "F11 と M は変更できません"
 			else: bind_key(rebinding,event.physical_keycode)
 		elif event is InputEventJoypadButton and event.pressed:
 			if event.button_index in [JOY_BUTTON_START,JOY_BUTTON_BACK]: rebinding = ""
-			elif rebinding in ["left","right","down"]: settings_note = "パッドの方向は十字キーとスティックで固定です"
-			else: bind_pad(rebinding,event.button_index)
+			elif settings_column==0: settings_note="キーボードのキーを押してください（STARTで取り消し）"
+			else: bind_pad(rebinding,event.button_index,settings_column-1)
 		elif event is InputEventJoypadMotion and event.axis in [JOY_AXIS_TRIGGER_LEFT,JOY_AXIS_TRIGGER_RIGHT] and event.axis_value>0.6:
-			if not rebinding in ["left","right","down"]: bind_pad(rebinding,PAD_LT if event.axis==JOY_AXIS_TRIGGER_LEFT else PAD_RT)
+			if settings_column>0: bind_pad(rebinding,PAD_LT if event.axis==JOY_AXIS_TRIGGER_LEFT else PAD_RT,settings_column-1)
 		elif event is InputEventMouseButton and event.pressed: rebinding = ""
 		return
 	if event is InputEventKey and event.pressed:
@@ -609,6 +658,9 @@ func settings_input(event):
 			KEY_RIGHT, KEY_D: settings_activate(1)
 			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 				if not event.echo: settings_activate()
+			KEY_DELETE:
+				var row=settings_rows()[settings_index]
+				if row in ACTIONS and settings_column>0: clear_pad_slot(row,settings_column-1)
 			KEY_ESCAPE, KEY_BACKSPACE, KEY_O:
 				if not event.echo: close_settings()
 	elif event is InputEventJoypadButton and event.pressed:
@@ -618,6 +670,9 @@ func settings_input(event):
 			JOY_BUTTON_DPAD_LEFT: settings_activate(-1)
 			JOY_BUTTON_DPAD_RIGHT: settings_activate(1)
 			JOY_BUTTON_A: settings_activate()
+			JOY_BUTTON_X:
+				var row=settings_rows()[settings_index]
+				if row in ACTIONS and settings_column>0: clear_pad_slot(row,settings_column-1)
 			JOY_BUTTON_B, JOY_BUTTON_START, JOY_BUTTON_BACK: close_settings()
 	elif event is InputEventJoypadMotion and event.axis in [JOY_AXIS_LEFT_X,JOY_AXIS_LEFT_Y]:
 		var dir = 0 if absf(event.axis_value)<0.6 else int(signf(event.axis_value))
@@ -633,17 +688,27 @@ func settings_input(event):
 				settings_index = i
 				var row = settings_rows()[i]
 				if row in ["bgm","sfx"]: settings_activate(-1 if m.x<settings_row_rect(i).get_center().x+200 else 1)
+				elif row in ACTIONS:
+					if m.x>=834:
+						settings_column=1+clampi(int((m.x-834)/86),0,PAD_SLOT_COUNT-1)
+						settings_activate()
+					elif m.x>=550:
+						settings_column=0
+						settings_activate()
 				else: settings_activate()
 
 func settings_row_rect(i: int) -> Rect2:
-	return Rect2(250,150+i*44,780,38)
+	return Rect2(80,150+i*44,1120,38)
+
+func settings_slot_rect(row: int, slot: int) -> Rect2:
+	return Rect2(834+slot*86,settings_row_rect(row).position.y+4,78,30)
 
 func draw_settings():
 	draw_rect(Rect2(0,0,W,H),Color(0.015,0.025,0.06,0.9))
-	txt(Vector2(250,110),"設定",36,PINK)
-	txt(Vector2(380,108),("十字 / スティックで選択   A 決定   B 戻る" if using_pad else "↑↓ 選択   ←→ 音量   ENTER 決定   ESC 戻る"),16,Color("bdcbe2"))
-	txt(Vector2(640,140),"キーボード",14,Color("84d9e2"))
-	txt(Vector2(870,140),"コントローラー",14,Color("84d9e2"))
+	txt(Vector2(80,102),"設定",36,PINK)
+	txt(Vector2(230,100),("十字 / 左スティック：項目・枠選択   A：変更   X：枠解除   B：戻る" if using_pad else "↑↓：項目   ←→：枠・音量   ENTER：変更   DELETE：枠解除   ESC：戻る"),16,Color("bdcbe2"))
+	txt(Vector2(570,140),"キーボード",14,Color("84d9e2"))
+	for slot in range(PAD_SLOT_COUNT): txt(Vector2(842+slot*86,140),"パッド%d"%(slot+1),14,Color("84d9e2"))
 	var rows = settings_rows()
 	for i in range(rows.size()):
 		var r = settings_row_rect(i)
@@ -655,25 +720,34 @@ func draw_settings():
 		match row:
 			"bgm", "sfx":
 				var level = bgm_level if row=="bgm" else sfx_level
-				txt(Vector2(272,y),"BGMの音量" if row=="bgm" else "効果音の音量",19)
+				txt(Vector2(104,y),"BGMの音量" if row=="bgm" else "効果音の音量",19)
 				for k in range(10):
 					draw_rect(Rect2(640+k*30,r.position.y+10,24,18),CYAN if k<level else Color("29344b"))
 				txt(Vector2(950,y),"切" if level==0 else str(level),18,Color("ffe28a"))
-			"reset": txt(Vector2(272,y),"初期設定に戻す",19)
-			"back": txt(Vector2(272,y),"戻る（自動で保存）",19)
+			"reset": txt(Vector2(104,y),"初期設定に戻す",19)
+			"back": txt(Vector2(104,y),"戻る（自動で保存）",19)
 			_:
-				txt(Vector2(272,y),ACTION_NAMES[row],19)
-				if rebinding==row:
-					txt(Vector2(640,y),"新しいキーかボタンを押してください（ESC / START で取り消し）",16,Color("ffe28a") if int(clock*4)%2==0 else PINK)
+				txt(Vector2(104,y),ACTION_NAMES[row],18)
+				var key_box=Rect2(550,r.position.y+4,264,30)
+				draw_rect(key_box,Color("183646") if selected and settings_column==0 else Color("111c30"))
+				if selected and settings_column==0: draw_rect(key_box,Color("ffe28a"),false,1.5)
+				var keys: Array[String] = []
+				for code in key_binds[row]: keys.append(key_name(code))
+				txt(Vector2(565,y-1),"キー入力待ち…" if rebinding==row and settings_column==0 else (" / ".join(keys) if not keys.is_empty() else "未設定"),16,Color("ffe28a") if rebinding==row else Color("edf6ff"))
+				if row in ["left","right","down"]:
+					txt(Vector2(846,y-1),"十字 / 左スティック（固定）",16,Color("a4bdce"))
 				else:
-					var keys: Array[String] = []
-					for code in key_binds[row]: keys.append(key_name(code))
-					var pads: Array[String] = []
-					for button in pad_binds[row]: pads.append(pad_name(button))
-					txt(Vector2(640,y)," / ".join(keys) if not keys.is_empty() else "未設定",18,Color("edf6ff"))
-					txt(Vector2(870,y),("十字 / スティック" if row in ["left","right","down"] else (" / ".join(pads) if not pads.is_empty() else "未設定")),18,Color("edf6ff"))
-	if settings_note!="": txt(Vector2(250,H-24),settings_note,17,Color("ffe28a"))
-	else: txt(Vector2(250,H-24),"項目を決定してから、割り当てたいキーやボタンを押します。同じキーは他の操作から外れます。",15,Color("bdcbe2"))
+					for slot in range(PAD_SLOT_COUNT):
+						var box=settings_slot_rect(i,slot)
+						var focused=selected and settings_column==slot+1
+						draw_rect(box,Color("214556") if focused else Color("111c30"))
+						draw_rect(box,Color("ffe28a") if focused else Color("3f6170"),false,1.5 if focused else 1)
+						var button=pad_slot(row,slot)
+						var label="入力待ち" if rebinding==row and focused else (pad_name(button) if button>=0 else "＋ 登録")
+						txt(box.position+Vector2(9,21),label,14,Color("ffe28a") if focused else (Color("edf6ff") if button>=0 else Color("7994a6")))
+	if settings_note!="": txt(Vector2(80,H-24),settings_note,17,Color("ffe28a"))
+	elif rebinding!="": txt(Vector2(80,H-24),"選択した枠へ登録する"+("キー" if settings_column==0 else "パッドボタン / LT / RT")+"を押してください。ESC / STARTで取消。",16,Color("ffe28a"))
+	else: txt(Vector2(80,H-24),"1機能につきパッド4枠。同じ機能を複数ボタンで使えます。同じボタンを別の機能に登録すると元の枠から移ります。",15,Color("bdcbe2"))
 
 func _unhandled_input(event):
 	if event is InputEventMouseButton and event.pressed and state=="play" and event.button_index in [MOUSE_BUTTON_LEFT,MOUSE_BUTTON_RIGHT]: mouse_aim=true
@@ -1979,6 +2053,7 @@ func self_test():
 	_unhandled_input(pad)
 	if state!="title": errors.append("pad return title")
 	if campaign.actor_regions.size()!=6 or campaign.backgrounds.size()!=2: errors.append("campaign images")
+	if campaign.props.size()!=2 or campaign.props["props-surface"].regions.size()!=6 or campaign.props["props-shaft"].regions.size()!=9: errors.append("campaign prop images")
 	for number in [2,3]:
 		stage=number
 		start_game()

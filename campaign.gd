@@ -20,6 +20,7 @@ var boss_attack = 0
 var actor_texture: Texture2D
 var actor_regions: Array = []
 var backgrounds: Dictionary = {}
+var props: Dictionary = {}
 
 func _init(game):
 	g=game
@@ -28,6 +29,10 @@ func _init(game):
 		actor_regions=JSON.parse_string(FileAccess.get_file_as_string("res://assets/campaign/regions.json")).actors
 	for name in ["surface","underground"]:
 		if ResourceLoader.exists("res://assets/campaign/"+name+".png"): backgrounds[name]=load("res://assets/campaign/"+name+".png")
+	if FileAccess.file_exists("res://assets/campaign/props-regions.json"):
+		var measured=JSON.parse_string(FileAccess.get_file_as_string("res://assets/campaign/props-regions.json"))
+		for name in measured:
+			props[name]={"texture":load("res://assets/campaign/"+name+".png"),"regions":measured[name]}
 
 func start(number: int):
 	data=JSON.parse_string(FileAccess.get_file_as_string("res://data/stage%d.json"%number))
@@ -234,6 +239,39 @@ func actor(index: int, center: Vector2, size: Vector2, tint=Color.WHITE, flip=fa
 	if flip: rect.position.x+=rect.size.x; rect.size.x=-rect.size.x
 	g.draw_texture_rect_region(actor_texture,rect,region,tint)
 
+func prop(name: String, index: int, target: Rect2, flip=false):
+	if not props.has(name): return
+	var r=props[name].regions[index]
+	var source=Rect2(r[0],r[1],r[2],r[3])
+	if flip:
+		g.draw_set_transform(target.position+Vector2(target.size.x,0),0,Vector2(-1,1))
+		g.draw_texture_rect_region(props[name].texture,Rect2(Vector2.ZERO,target.size),source)
+		g.draw_set_transform(Vector2.ZERO)
+	else: g.draw_texture_rect_region(props[name].texture,target,source)
+
+func prop_strip(name: String, index: int, target: Rect2, tile_width: float):
+	if not props.has(name): return
+	var r=props[name].regions[index]
+	for x in range(0,int(target.size.x),int(tile_width)):
+		var width=minf(tile_width,target.size.x-x)
+		g.draw_texture_rect_region(props[name].texture,Rect2(target.position+Vector2(x,0),Vector2(width,target.size.y)),Rect2(r[0],r[1],r[2]*width/tile_width,r[3]))
+
+func piston(target: Rect2, extended: bool, flip: bool):
+	if not props.has("props-shaft"): return
+	var r=props["props-shaft"].regions[6 if extended else 7]
+	var scale=target.size.y/r[3]
+	# Stretch only the central shaft, preserving the housing/head size between states.
+	var left=minf(200,r[2]*0.45); var right=minf(132,r[2]*0.4)
+	var widths=[left*scale,maxf(1,target.size.x-(left+right)*scale),right*scale]
+	var cuts=[0.0,left,r[2]-right,r[2]]
+	if flip: g.draw_set_transform(target.position+Vector2(target.size.x,0),0,Vector2(-1,1))
+	else: g.draw_set_transform(target.position)
+	var x=0.0
+	for i in range(3):
+		g.draw_texture_rect_region(props["props-shaft"].texture,Rect2(x,0,widths[i],target.size.y),Rect2(r[0]+cuts[i],r[1],cuts[i+1]-cuts[i],r[3]))
+		x+=widths[i]
+	g.draw_set_transform(Vector2.ZERO)
+
 func draw():
 	var bg="surface" if g.stage==2 else "underground"
 	if backgrounds.has(bg): g.draw_texture_rect(backgrounds[bg],Rect2(-24-fmod(camera.x*0.035,24),-fmod(camera.y*0.04,18),1330,760),false)
@@ -243,8 +281,8 @@ func draw():
 		if not p.intersects(Rect2(camera,Vector2(1280,720))): continue
 		var r=Rect2(p.position+o,p.size)
 		g.draw_rect(r,Color("192c38") if g.stage==2 else Color("292438"))
-		g.draw_rect(Rect2(r.position,Vector2(r.size.x,6)),Color("8ba7a2") if g.stage==2 else Color("8c6687"))
-		for x in range(int(r.position.x)+12,int(r.end.x)-12,55): g.draw_line(Vector2(x,r.position.y+10),Vector2(x+18,r.position.y+21),Color("3d4e58"),3)
+		var heavy=p.size.y>40
+		prop_strip("props-surface" if g.stage==2 else "props-shaft",0 if heavy else 1,Rect2(r.position,Vector2(r.size.x,minf(r.size.y,96) if heavy else maxf(r.size.y,38))),320 if heavy else 256)
 	if g.stage==2: draw_surface(o)
 	else: draw_shaft(o)
 	for e in g.enemies:
@@ -269,9 +307,9 @@ func draw():
 func draw_surface(o: Vector2):
 	for roof in shelters:
 		var p=roof.position+o
-		g.draw_rect(Rect2(p+Vector2(0,-12),Vector2(roof.size.x,12)),Color("6d93a4"))
-		g.draw_line(p+Vector2(12,28),p+Vector2(12,230),Color("546675"),8)
-		g.draw_line(p+Vector2(roof.size.x-12,28),p+Vector2(roof.size.x-12,230),Color("546675"),8)
+		prop("props-surface",3,Rect2(p+Vector2(8,58),Vector2(32,610-roof.position.y-58)))
+		prop("props-surface",3,Rect2(p+Vector2(roof.size.x-40,58),Vector2(32,610-roof.position.y-58)))
+		prop("props-surface",2,Rect2(p,Vector2(roof.size.x,64)))
 		g.txt(p+Vector2(20,90),"防空シェルター",20,g.CYAN)
 	for strike in strikes:
 		if strike.phase<1.5 and absf(strike.target-g.player.x)<1000:
@@ -281,10 +319,11 @@ func draw_surface(o: Vector2):
 			if strike.phase<1.1: g.txt(Vector2(x-45,240),"空爆予告",18,Color("ffb55f"))
 	for vent in data.vents:
 		var p=Vector2(vent[0],vent[1])+o
-		g.draw_rect(Rect2(p,Vector2(vent[2],14)),g.CYAN)
+		prop("props-surface",4,Rect2(p,Vector2(vent[2],50)))
 		for k in range(3): g.draw_arc(p+Vector2(vent[2]/2,-20-k*24-fmod(g.clock*30,24)),23,PI,TAU,16,Color(0.3,1,0.9,0.5),3)
 	for belt in data.belts:
 		var p=Vector2(belt[0],belt[1])+o
+		prop_strip("props-surface",5,Rect2(p,Vector2(belt[2],42)),210)
 		for x in range(15,int(belt[2])-15,45): g.txt(p+Vector2(x,-8),"›" if belt[3]>0 else "‹",27,Color("ffd27f"))
 	if camera.x<950:
 		g.txt(Vector2(100,220),"STAGE 02 / 地上・夜明けの迎撃線",25,g.CYAN)
@@ -299,23 +338,23 @@ func draw_shaft(o: Vector2):
 	for crumble in crumbles:
 		if crumble.timer==0: continue
 		var r=Rect2(crumble.rect.position+o,crumble.rect.size)
-		g.draw_rect(r,Color("b67c50") if crumble.timer<0 else Color("f5a959"))
-		g.draw_polyline(PackedVector2Array([r.position+Vector2(20,0),r.position+Vector2(80,14),r.position+Vector2(100,2),r.position+Vector2(170,20)]),Color("392a31"),3)
+		prop("props-shaft",3 if crumble.timer<0 else 4,Rect2(r.position,Vector2(r.size.x,55)))
 	for plug in plugs:
 		if plug.hp>0:
 			var r=Rect2(plug.rect.position+o,plug.rect.size)
-			g.draw_rect(r,Color("b6874f")); g.draw_rect(r,g.CYAN,false,2)
+			prop("props-shaft",2 if plug.hp>6 else 5,Rect2(r.position,Vector2(r.size.x,62)))
 			g.txt(r.position+Vector2(15,-15),"下へ撃って隔壁を破壊 ↓",20,Color("ffe28a"))
 	for item in data.crushers:
 		var r=crusher_rect(item); r.position+=o
 		var t=crusher_phase(item)
 		if t<1.2:
+			piston(Rect2(Vector2(0 if item[0]==0 else 1080,item[1])+o,Vector2(200,130)),false,item[0]!=0)
 			g.draw_rect(r,Color(1,0.4,0.25,0.15)); g.draw_rect(r,Color("ffb85c"),false,2)
 			g.txt(r.position+Vector2(15,60),"圧搾機 / 退避",20,Color("ffb85c"))
 		elif t<2.1:
-			g.draw_rect(r,Color("735668")); g.draw_rect(r,Color("f6a562"),false,5)
+			piston(r,true,item[0]!=0)
 		else:
-			g.draw_rect(Rect2(Vector2(0 if item[0]==0 else 1210,item[1])+o,Vector2(70,130)),Color("514153"))
+			piston(Rect2(Vector2(0 if item[0]==0 else 1080,item[1])+o,Vector2(200,130)),false,item[0]!=0)
 	if camera.y<200:
 		g.txt(Vector2(100,215),"STAGE 03 / 地下・星骸の深淵",25,g.CYAN)
 		g.txt(Vector2(100,250),"隔壁は下へ射撃。ヒビの足場は着地から0.65秒で崩れる。",19,Color.WHITE)
@@ -332,7 +371,8 @@ func draw_final_boss(o: Vector2):
 	for seal in seals:
 		if seal.hp>0:
 			g.draw_line(seal.p+o,core,Color(0.4,1,1,0.35),3)
-			g.draw_circle(seal.p+o,25,Color("314b67")); g.draw_arc(seal.p+o,29,g.clock,g.clock+TAU,32,g.CYAN,3)
+			prop("props-shaft",8,Rect2(seal.p+o-Vector2(32,32),Vector2(64,64)))
+			g.draw_arc(seal.p+o,32,g.clock,g.clock+TAU,32,g.CYAN,2)
 			g.txt(seal.p+o+Vector2(-34,-40),"封印装置",15,g.CYAN)
 	g.txt(Vector2(330,210),"封印装置を破壊 → 光るコアを狙え" if not boss_vulnerable() else "コア開放！ 上へ狙って撃ち込め",21,Color("ffe28a"))
 	for ray in rays:
