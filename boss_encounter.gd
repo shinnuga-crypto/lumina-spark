@@ -76,7 +76,7 @@ func draw(o: Vector2):
 		g.action_art.sprite("boss",3,Vector2(1050,6090)+o,Vector2(180,155))
 		var active=pressure_time>=PRESSURE_WARN
 		var col=Color("ff4fa8") if active else Color("ffe291")
-		g.txt(Vector2(260,155),"重力パルス！ ↓ 下段へ" if active else "重力収束 / 上段から降りろ ↓",22,col)
+		g.txt(Vector2(40,150),"重力パルス！ ↓ 下段へ" if active else "重力収束 / 上段から降りろ ↓",20,col)
 		for x in [180,420,680]:
 			var y=5900+fmod(g.clock*(520 if active else 170)+x,350)
 			g.draw_line(Vector2(x,y-65)+o,Vector2(x,y)+o,Color(col,0.7),4 if active else 2)

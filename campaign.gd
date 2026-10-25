@@ -475,7 +475,7 @@ func draw_final_boss(o: Vector2):
 			g.draw_arc(seal.p+o,32,g.clock,g.clock+TAU,32,g.CYAN,2)
 			g.txt(seal.p+o+Vector2(-34,-40),"封印装置",15,g.CYAN)
 	var instruction="封印装置を破壊 → 光るコアを狙え" if seals.any(func(s): return s.hp>0) else ("コア開放！ 狙って撃ち込め" if boss_vulnerable() else "装甲閉鎖 / 次の開放に備えろ")
-	g.txt(Vector2(330,210),instruction,21,Color("ffe28a"))
+	g.txt(Vector2(40,210),instruction,17,Color("ffe28a"))
 
 func draw_combat(o: Vector2):
 	for b in g.bullets:
