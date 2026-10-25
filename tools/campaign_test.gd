@@ -2,6 +2,7 @@ extends SceneTree
 var g
 var failures: Array[String]=[]
 var held: Dictionary={}
+var shaft_target=-1.0
 
 func _initialize(): call_deferred("run")
 func check(ok: bool, note: String):
@@ -53,9 +54,15 @@ func run():
 	var plug=g.campaign.plugs[0]
 	check(g.campaign.hit_device({"p":plug.rect.get_center(),"r":5,"damage":12}),"shootable downward bulkhead")
 	check(plug.hp<=0 and g.platforms[plug.index].size==Vector2.ZERO,"bulkhead opens physical descent")
-	g.player=Vector2(250,970); g.grounded=true; press(KEY_DOWN,true); press(KEY_SPACE,true)
+	var ledge=g.campaign.crumbles[0].rect
+	g.player=Vector2(ledge.get_center().x,ledge.position.y); g.grounded=true; press(KEY_DOWN,true); press(KEY_SPACE,true)
 	g.update_game(1.0/60)
-	check(g.drop_timer>0 and g.player.y>970,"drop through thin ledge deep underground")
+	check(g.drop_timer>0 and g.player.y>ledge.position.y,"drop through thin ledge deep underground")
+	# The shaft zigzags: no band leaves the centre open, so Lumina has to run to a side gap.
+	var open_column=true
+	for p in g.platforms:
+		if p.position.y>700 and p.position.y<5500 and p.position.x<=640 and p.end.x>=640 and p.size.y>=35: open_column=false
+	check(not open_column,"shaft centre is blocked")
 	release()
 	var crumble=g.campaign.crumbles[0]
 	g.player=Vector2(crumble.rect.get_center().x,crumble.rect.position.y); g.grounded=true
@@ -68,6 +75,26 @@ func run():
 	for seal in g.campaign.seals: g.campaign.hit_device({"p":seal.p,"r":5,"damage":12})
 	check(g.campaign.boss_vulnerable(),"destroying both seals opens core")
 	g.campaign.respawn(); check(g.campaign.seals[0].hp>0 and g.boss_hp==g.boss_max_hp,"boss retry resets seals and health")
+	# Enemies off screen hold their fire.
+	fresh(2); g.bullets.clear()
+	var far=g.enemies[-1]; far.shot=0; far.origin=g.campaign.camera+Vector2(1400,300); far.p=far.origin
+	g.campaign.update_enemies(1.0/60)
+	check(g.bullets.is_empty(),"off-screen enemy does not shoot")
+	# A launch pad only fires for someone standing on it, not on a ledge above.
+	fresh(2); var vent=g.campaign.data.vents[0]
+	g.player=Vector2(vent[0]+vent[2]/2,vent[1]-140); g.grounded=true; g.velocity=Vector2.ZERO
+	g.campaign.update(1.0/60); check(g.velocity.y==0,"launch pad ignores a ledge above it")
+	g.player.y=vent[1]; g.grounded=true; g.campaign.update(1.0/60); check(g.velocity.y<-500,"launch pad launches from its top")
+	# The saber cuts the bulkhead underfoot and the boss seals.
+	fresh(3); var bulkhead=g.campaign.plugs[0]
+	g.player=Vector2(bulkhead.rect.get_center().x,bulkhead.rect.position.y); g.grounded=true
+	g.begin_saber(2); g.saber_time=g.saber_total-g.saber_startup-0.03; g.update_saber()
+	check(bulkhead.hp<=0,"saber breaks the bulkhead underfoot")
+	g.boss_active=true; g.reset_saber_action()
+	var seal=g.campaign.seals[0]; g.player=seal.p+Vector2(-90,55); g.facing=1; g.grounded=true
+	g.begin_saber(2); g.saber_time=g.saber_total-g.saber_startup-0.03; g.update_saber()
+	check(seal.hp<12,"saber damages a seal")
+	g.boss_active=false; g.reset_saber_action()
 	for number in [2,3]: route(number)
 	g.state="clear"; g.stage=1; g.complete_or_start(); check(g.stage==2,"stage 1 continues to 2")
 	g.state="clear"; g.complete_or_start(); check(g.stage==3,"stage 2 continues to 3")
@@ -79,9 +106,20 @@ func route(number: int):
 	fresh(number)
 	var ticks=0
 	var jump_age=100
+	shaft_target=-1.0
 	for i in range(24000):
 		g.invincible=999
 		var target=Vector2(640,g.player.y) if number==3 else Vector2(g.campaign.arena.position.x+330,610)
+		if number==3 and not g.boss_active:
+			# Run to the open end of the band underfoot; on a bulkhead floor, stand over the bulkhead.
+			target.x=shaft_target if g.grounded or shaft_target<0 else shaft_target
+			if g.grounded:
+				for p in g.platforms:
+					if absf(g.player.y-p.position.y)<3 and g.player.x>=p.position.x-1 and g.player.x<=p.end.x+1:
+						if p.size.y>=60 or p.size.x<300: shaft_target=620.0
+						elif p.position.x>1: shaft_target=p.position.x-90
+						else: shaft_target=p.end.x+90
+			target.x=shaft_target if shaft_target>=0 else 640.0
 		press(KEY_RIGHT,g.player.x<target.x-18); press(KEY_LEFT,g.player.x>target.x+18)
 		if number==2 and not g.boss_active:
 			if g.grounded and not g.on_ground(g.player.x+55,g.player.y): jump_age=0

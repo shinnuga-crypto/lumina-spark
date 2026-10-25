@@ -3001,6 +3001,7 @@ func saber_catches(point: Vector2, radius: float) -> bool:
 
 func update_saber():
 	if not saber_active(): return
+	if stage>1: campaign.saber_devices()
 	# The double slash may hit each target once per swing.
 	var hit_round=saber_segment()[1] if not saber_seq.is_empty() else 1
 	if hit_round!=saber_round:

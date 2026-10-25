@@ -65,7 +65,7 @@ func start(number: int):
 	if number==3: reset_seals()
 
 func reset_seals():
-	seals=[{"p":Vector2(740,5950),"hp":12},{"p":Vector2(860,5850),"hp":12}]
+	seals=[{"p":Vector2(740,5950),"hp":12},{"p":Vector2(860,5910),"hp":12}]
 
 func left_limit() -> float:
 	return arena.position.x+35 if g.boss_active else 25.0
@@ -114,6 +114,26 @@ func hit_device(b: Dictionary) -> bool:
 				return true
 	return false
 
+# The saber can cut bulkheads (also the one under Lumina's feet) and the boss seals.
+func saber_devices():
+	if not g.saber_active(): return
+	var damage=g.SABER_DAMAGE[g.saber_tier]
+	for i in range(plugs.size()):
+		var plug=plugs[i]
+		var tag="plug%d"%i
+		if plug.hp<=0 or tag in g.saber_hits: continue
+		var underfoot=absf(g.player.y-plug.rect.position.y)<4 and g.player.x>plug.rect.position.x-20 and g.player.x<plug.rect.end.x+20
+		if underfoot or g.saber_contacts(plug.rect):
+			g.saber_hits.append(tag)
+			hit_device({"p":plug.rect.get_center(),"r":plug.rect.size.x,"damage":damage})
+	if not g.boss_active: return
+	for i in range(seals.size()):
+		var tag="seal%d"%i
+		if seals[i].hp<=0 or tag in g.saber_hits: continue
+		if g.saber_contacts(Rect2(seals[i].p-Vector2(30,30),Vector2(60,60))):
+			g.saber_hits.append(tag)
+			hit_device({"p":seals[i].p,"r":5,"damage":damage})
+
 func update(dt: float):
 	var section=int(g.player.x/2400) if g.stage==2 else int(maxf(0,g.player.y-500)/1200)
 	if section>checkpoint_section and g.grounded:
@@ -121,7 +141,8 @@ func update(dt: float):
 		g.hp=g.max_hp; g.banner="CHECKPOINT  /  全回復"; g.banner_time=2
 	if g.stage==2:
 		for vent in data.vents:
-			if g.grounded and absf(g.player.x-(vent[0]+vent[2]/2))<vent[2]/2:
+			# Only standing on the pad launches, not standing on a ledge above it.
+			if g.grounded and absf(g.player.y-vent[1])<4 and absf(g.player.x-(vent[0]+vent[2]/2))<vent[2]/2:
 				g.velocity.y=-820; g.grounded=false; g.jumps=1; g.sound("jump")
 		for belt in data.belts:
 			if g.grounded and absf(g.player.y-belt[1])<2 and g.player.x>belt[0] and g.player.x<belt[0]+belt[2]: g.player.x+=belt[3]*dt
@@ -176,6 +197,8 @@ func update_enemies(dt: float):
 		elif e.kind==8: e.p=e.origin+Vector2(sin(e.t)*75,cos(e.t*1.2)*25)
 		elif e.kind==9: e.p=e.origin+Vector2(sin(e.t*2.1)*150,sin(e.t*3.2)*65)
 		else: e.p=e.origin+Vector2(sin(e.t*1.3)*75,0)
+		var view=Rect2(camera+Vector2(20,20),Vector2(1240,680))
+		if e.shot<=0 and (not view.has_point(e.p) or (g.boss_active and not arena.has_point(e.p))): e.shot=0.4
 		if e.shot<=0:
 			e.cycle+=1
 			e.shot=2.5 if e.kind!=10 else 3.3
@@ -220,7 +243,7 @@ func update_boss(dt: float):
 
 func respawn():
 	g.player=checkpoint_pos; g.safe_pos=checkpoint_pos; g.velocity=Vector2.ZERO
-	g.hp=g.max_hp; g.invincible=2; g.bullets.clear(); g.saber_time=0; g.saber_cooldown=0
+	g.hp=g.max_hp; g.invincible=2; g.bullets.clear(); g.reset_saber_action(); g.saber_cooldown=0; g.saber_spam=0
 	g.charge=0; g.charge_release=-1; g.hurt_pose=0; g.dash_timer=0; g.dash_cooldown=0
 	g.jumps=0; g.prev_jump=false; g.prev_fire=false; g.prev_dash=false; g.prev_saber=false
 	g.fire_buffer=0; g.drop_buffer=0; g.walk_phase=0; g.aim_time=0; g.saber_air=false
@@ -358,7 +381,7 @@ func draw_shaft(o: Vector2):
 	if camera.y<200:
 		g.txt(Vector2(100,215),"STAGE 03 / 地下・星骸の深淵",25,g.CYAN)
 		g.txt(Vector2(100,250),"隔壁は下へ射撃。ヒビの足場は着地から0.65秒で崩れる。",19,Color.WHITE)
-		g.txt(Vector2(100,280),"圧搾機の予告を見て、左右の足場へ降りよう。",18,Color("c1d4df"))
+		g.txt(Vector2(100,280),"床の切れ目は左右交互。走って下へ。圧搾機の予告に注意。",18,Color("c1d4df"))
 
 func draw_final_boss(o: Vector2):
 	# Static backplate, anchored pipes and sprite never translate or bob.
@@ -407,7 +430,7 @@ func draw_hud():
 	g.txt(Vector2(42,49),"LUMINA %d / %d"%[g.hp,g.max_hp],17,g.PINK)
 	g.draw_rect(Rect2(42,64,220,17),Color("29344b")); g.draw_rect(Rect2(42,64,220*float(g.hp)/g.max_hp,17),g.CYAN)
 	g.txt(Vector2(300,50),data.name,23)
-	g.txt(Vector2(300,80),"DASH %s   SABER %s   CHARGE %s"%["READY" if g.dash_cooldown<=0 else "…",g.saber_status(),"MAX" if g.charge>=g.FULL_CHARGE else "長押し"],14,g.CYAN)
+	g.txt(Vector2(300,80),"DASH %s   SABER %s   CHARGE %s"%["READY" if g.dash_cooldown<=0 else "…",g.saber_status(),"MAX（ジャスト）" if g.dodge_charge>0 else ("MAX" if g.charge>=g.FULL_CHARGE else ("READY" if g.charge>=0.8 else "長押し"))],14,g.CYAN)
 	g.txt(Vector2(870,49),"%07d pt"%g.score,21,Color("ffe28a")); g.txt(Vector2(1090,49),g.time_text(),24)
 	g.txt(Vector2(870,80),"COMBO %d   撃破 %d"%[g.combo,g.kills],14,Color("c1d4df"))
 	var progress=g.player.x/width if g.stage==2 else g.player.y/height
@@ -415,5 +438,7 @@ func draw_hud():
 	if g.banner_time>0:
 		g.draw_rect(Rect2(270,125,740,48),Color(0.02,0.06,0.13,0.85)); g.txt(Vector2(300,157),g.banner,21,g.CYAN)
 	if g.boss_active and g.boss_hp>0:
+		# A dark plate keeps the name and bar readable over the floor art.
+		g.draw_rect(Rect2(355,636,570,64),Color(0.02,0.03,0.08,0.82))
 		g.draw_rect(Rect2(370,672,540,20),Color("30233f")); g.draw_rect(Rect2(370,672,540*float(g.boss_hp)/g.boss_max_hp,20),g.PINK)
 		g.txt(Vector2(430,660),"SKY VULTURE" if g.stage==2 else "ABYSS MOTHER / 壁面固定要塞",19)
