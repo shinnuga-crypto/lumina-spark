@@ -7,6 +7,12 @@ var weapon_region=Rect2()
 var grip=Vector2.ZERO
 var guard_y=0.0
 var blade_scale=0.1
+# Set while drawing the slash trail to pose the sword at an earlier moment of the swing.
+var progress_override=-1.0
+# Charging holds the blade drawn back and low behind the body.
+const CHARGE_HAND=2.35
+const CHARGE_FOLD=0.4
+const CHARGE_SWORD=2.75
 
 func _init(game):
 	g=game
@@ -21,6 +27,7 @@ func swing_elapsed() -> float:
 	return clampf(g.saber_total-g.saber_time,0,g.saber_total)
 
 func swing_progress() -> float:
+	if progress_override>=0: return progress_override
 	return clampf((swing_elapsed()-g.saber_startup)/maxf(0.01,g.saber_total-g.saber_startup-g.saber_recovery),0,1)
 
 func swing_weight() -> float:
@@ -30,6 +37,18 @@ func swing_weight() -> float:
 func charge_weight() -> float:
 	return smoothstep(0,0.16,g.saber_charge)
 
+# The blade snaps through the front of the arc and eases into the follow-through.
+func strike_curve() -> float:
+	return 1-pow(1-swing_progress(),3)
+
+func run_factor() -> float:
+	return clampf(absf(g.velocity.x)/285.0,0,1) if g.grounded else 0.0
+
+# 0..1: how far a ground slash has stepped into its low lunge. Running keeps half of it.
+func lunge() -> float:
+	if g.saber_time<=0 or g.saber_kind!="ground" or not g.grounded: return 0.0
+	return smoothstep(0,0.45,swing_progress())*swing_weight()*(1-run_factor()*0.5)
+
 func prepared_entry() -> float:
 	return g.saber_prepare_weight*(1-smoothstep(0,0.08,swing_elapsed())) if g.saber_time>0 else 0.0
 
@@ -37,6 +56,11 @@ func hip(phase: float) -> Vector2:
 	var value=g.walk_hip(phase)
 	if not g.grounded: value=Vector2(0,-51+clampf(-g.velocity.y/550.0,0,1)*2)
 	if g.landing_time>0: value.y+=sin((1-g.landing_time/0.12)*PI)*4
+	if g.grounded:
+		# A ready stance: knees soft, a slow breath, lower again while charging and in the lunge.
+		var still=1-run_factor()
+		value.y+=(1.5+sin(g.clock*2.2)*0.8)*still+5*maxf(charge_weight(),prepared_entry())*still+9*lunge()
+		value.x+=-2*still+6*lunge()
 	return value
 
 func torso_angle() -> float:
@@ -45,8 +69,9 @@ func torso_angle() -> float:
 	var twist=0.0
 	if g.saber_kind=="dash": twist=0.22
 	elif g.saber_kind=="air": twist=sin(swing_progress()*TAU)*0.16
-	else: twist=lerpf(-0.16,0.22,smoothstep(0,1,swing_progress()))
-	return base+twist*swing_weight()-maxf(charge_weight(),prepared_entry())*0.10
+	else: twist=lerpf(-0.2,0.4,strike_curve())
+	var ready=0.05*(1-run_factor()) if g.grounded else 0.0
+	return base+ready+twist*swing_weight()-maxf(charge_weight(),prepared_entry())*0.14
 
 func leg(phase: float, side: String) -> Dictionary:
 	var value=g.gait_leg(phase,side)
@@ -60,8 +85,16 @@ func leg(phase: float, side: String) -> Dictionary:
 		value.ankle=apex.lerp(ascend,rising).lerp(descend,falling)
 		value.pitch=-0.1+rising*0.14-falling*0.04 if side=="near" else 0.08-rising*0.15
 	elif resting:
-		value.ankle=Vector2(10,-10) if side=="near" else Vector2(-10,-10)
+		# Feet apart, front foot ahead: a fighter's stance instead of standing at attention.
+		var wide=charge_weight()
+		value.ankle=Vector2(16+6*wide,-10) if side=="near" else Vector2(-27-3*wide,-10)
 		value.pitch=0.0
+	var step=lunge()
+	if step>0:
+		# Ground slash: plant the front foot far forward and stretch the back leg, heel lifted.
+		var target=Vector2(31,-10) if side=="near" else Vector2(-31,-13)
+		value.ankle=value.ankle.lerp(target,step)
+		value.pitch=lerpf(value.pitch,0.0 if side=="near" else 0.3,step)
 	if g.dash_timer>0:
 		value.ankle=Vector2(-25,-10) if side=="far" else Vector2(15,-23)
 		value.pitch=-0.18 if side=="far" else 0.12
@@ -81,23 +114,27 @@ func arm_adjust(gun: bool, angle: float, bend: float) -> Vector2:
 	elif g.saber_kind=="air":
 		hand=-2.1+TAU*p; fold=0.26
 	else:
-		hand=lerpf(-2.0,0.7,smoothstep(0,1,p)); fold=lerpf(0.75,0.15,sin(p*PI))
+		# From behind the head, over the top, to a low forward finish.
+		# After a charge the arc starts from the drawn-back pose and sweeps up over the shoulder.
+		var drawn=g.saber_prepare_weight
+		hand=lerpf(lerpf(-2.7,CHARGE_HAND-TAU,drawn),0.95,strike_curve()); fold=lerpf(lerpf(0.7,CHARGE_FOLD,drawn),0.2,smoothstep(0,0.6,p))
 	var part=g.motion_meta.rig.free_arm
 	var axis=(Vector2(part.end[0],part.end[1])-Vector2(part.origin[0],part.origin[1])).angle()
 	var target=hand-axis+fold*0.5
 	weight=maxf(weight,prepared_entry())
 	if g.saber_charge>0 and g.saber_time<=0:
-		target=-2.0-axis+0.5
+		# Charging draws the blade back and low behind the body.
+		target=CHARGE_HAND-axis+CHARGE_FOLD*0.5
 		weight=charge_weight()
-		fold=0.95
+		fold=CHARGE_FOLD
 	return Vector2(lerp_angle(angle,target,weight),lerpf(bend,fold,weight))
 
 func sword_angle() -> float:
-	if g.saber_time<=0: return -1.85
+	if g.saber_time<=0: return CHARGE_SWORD
 	var p=swing_progress()
 	if g.saber_kind=="dash": return lerpf(-0.2,0.04,smoothstep(0,0.4,p))
 	if g.saber_kind=="air": return -2.4+TAU*p
-	return lerpf(-2.0,1.1,smoothstep(0,1,p))
+	return lerpf(lerpf(-2.75,CHARGE_SWORD-TAU,g.saber_prepare_weight),1.2,strike_curve())
 
 func sword_pose(at: Vector2, phase: float) -> Dictionary:
 	var arm=g.walk_arm(phase,false)
@@ -106,6 +143,9 @@ func sword_pose(at: Vector2, phase: float) -> Dictionary:
 	var direction=Vector2(local.x*g.facing,local.y)
 	var length=76.0+g.saber_tier*55.0
 	if g.saber_time<=0: length=76.0
+	elif progress_override<0:
+		# The beam ignites as the swing starts instead of hanging out at full length in the wind-up.
+		length*=lerpf(0.35,1.0,smoothstep(0,g.saber_startup+0.02,swing_elapsed()))
 	return {"hand":hand,"direction":direction,"length":length,"tip":hand+direction*length}
 
 func draw_weapon(at: Vector2, phase: float):
@@ -131,6 +171,9 @@ func draw_effects(offset: Vector2):
 		var charge_col=Color("ffe291") if tier==2 else (g.CYAN if tier==1 else g.PINK)
 		g.draw_arc(pose.hand,14+g.saber_charge*6,g.clock*4,g.clock*4+TAU*g.saber_charge/g.FULL_CHARGE,32,charge_col,2+tier)
 		if tier>0: g.draw_circle(pose.hand,22+sin(g.clock*14)*3,Color(charge_col,0.16))
+	if g.saber_kind!="dash" and g.saber_time>0:
+		draw_trail(g.player+offset,col)
+		return
 	if not g.saber_active(): return
 	var center=g.player+offset-Vector2(0,55)
 	var r=g.saber_reach()-10
@@ -144,3 +187,34 @@ func draw_effects(offset: Vector2):
 		var span=0.75+g.saber_tier*0.15
 		g.draw_arc(center,r,angle-span if g.saber_facing>0 else angle,angle if g.saber_facing>0 else angle+span,32,Color(col,0.23),14+g.saber_tier*4)
 		g.draw_arc(center,r,angle-span if g.saber_facing>0 else angle,angle if g.saber_facing>0 else angle+span,32,Color(col,0.85),3)
+
+# A filled crescent swept by the blade: thick and bright at the leading edge, fading behind it,
+# and lingering a moment into the follow-through.
+func draw_trail(at: Vector2, col: Color):
+	var p=swing_progress()
+	if p<=0: return
+	var fade=smoothstep(0,g.saber_recovery+0.04,g.saber_time)
+	var span=(0.7 if g.saber_kind=="air" else 0.55)+g.saber_tier*0.08
+	var start=maxf(0,p-span)
+	var samples=14
+	var inner: Array[Vector2]=[]
+	var outer: Array[Vector2]=[]
+	for i in range(samples+1):
+		progress_override=lerpf(start,p,float(i)/samples)
+		var pose=sword_pose(at,g.walk_phase)
+		# Thickest in the middle of the arc, tapering to points at both ends: a crescent.
+		var t=float(i)/samples
+		inner.append(pose.tip-pose.direction*pose.length*(0.08+0.5*sin(t*PI)*smoothstep(0,0.35,t)))
+		outer.append(pose.tip+pose.direction*6)
+	progress_override=-1.0
+	var white=Color(1,1,1)
+	# Saturated body colour so the crescent reads as a solid slash, not a pale sheet.
+	col=[Color("2ee6d6"),Color("46f5b4"),Color("ffc94d")][g.saber_tier]
+	for i in range(samples):
+		var a0=pow(float(i)/samples,1.4)*fade
+		var a1=pow(float(i+1)/samples,1.4)*fade
+		g.draw_polygon(PackedVector2Array([inner[i],inner[i+1],outer[i+1],outer[i]]),PackedColorArray([Color(col,0.35*a0),Color(col,0.35*a1),Color(col,0.92*a1),Color(col,0.92*a0)]))
+		# Bright rim along the path of the tip.
+		var rim0=outer[i]+(inner[i]-outer[i])*0.35
+		var rim1=outer[i+1]+(inner[i+1]-outer[i+1])*0.35
+		g.draw_polygon(PackedVector2Array([rim0,rim1,outer[i+1],outer[i]]),PackedColorArray([Color(white,0.0),Color(white,0.0),Color(white,0.95*a1),Color(white,0.95*a0)]))
