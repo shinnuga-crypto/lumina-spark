@@ -2,6 +2,7 @@ extends RefCounted
 
 # Additional stages share Lumina's movement/combat, but use full 2D world coordinates.
 var g
+var encounter
 var data: Dictionary
 var camera = Vector2.ZERO
 var width = 11280.0
@@ -30,6 +31,7 @@ var props: Dictionary = {}
 
 func _init(game):
 	g=game
+	encounter=load("res://boss_encounter.gd").new(g)
 	if ResourceLoader.exists("res://assets/campaign/actors-v2.png"):
 		actor_texture=load("res://assets/campaign/actors-v2.png")
 		actor_regions=JSON.parse_string(FileAccess.get_file_as_string("res://assets/campaign/regions.json")).actors
@@ -68,7 +70,7 @@ func start(number: int):
 	g.boss_hp=g.boss_max_hp
 	g.boss_pos=Vector2(arena.position.x+900,370) if number==2 else Vector2(1050,6190)
 	g.boss_active=false; g.boss_intro=0; g.boss_cycle=0
-	boss_clock=0; boss_attack=0
+	boss_clock=0; boss_attack=0; g.boss_phase=1; encounter.reset()
 	if number==3: reset_seals()
 
 func reset_seals():
@@ -95,10 +97,11 @@ func boss_rect() -> Rect2:
 	return Rect2(g.boss_pos-Vector2(95,90),Vector2(190,135)) if g.stage==2 else Rect2(g.boss_pos-Vector2(63,355),Vector2(126,115))
 
 func boss_vulnerable() -> bool:
+	if encounter.overdrive>0: return false
 	if g.stage==2: return true
 	for seal in seals:
 		if seal.hp>0: return false
-	return fmod(boss_clock,7.0)<4.6
+	return fmod(boss_clock,6.0 if g.boss_phase==2 else 7.0)<(3.4 if g.boss_phase==2 else 4.6)
 
 func hit_device(b: Dictionary) -> bool:
 	for plug in plugs:
@@ -146,11 +149,10 @@ func update(dt: float):
 	if section>checkpoint_section and g.grounded:
 		checkpoint_section=section; checkpoint_pos=g.player
 		g.hp=g.max_hp; g.banner="CHECKPOINT  /  全回復"; g.banner_time=2
+	for vent in data.vents:
+		if g.grounded and absf(g.player.y-vent[1])<4 and absf(g.player.x-(vent[0]+vent[2]/2))<vent[2]/2:
+			g.velocity.y=-820; g.grounded=false; g.jumps=1; g.sound("jump")
 	if g.stage==2:
-		for vent in data.vents:
-			# Only standing on the pad launches, not standing on a ledge above it.
-			if g.grounded and absf(g.player.y-vent[1])<4 and absf(g.player.x-(vent[0]+vent[2]/2))<vent[2]/2:
-				g.velocity.y=-820; g.grounded=false; g.jumps=1; g.sound("jump")
 		for belt in data.belts:
 			if g.grounded and absf(g.player.y-belt[1])<2 and g.player.x>belt[0] and g.player.x<belt[0]+belt[2]: g.player.x+=belt[3]*dt
 		# Announce each themed stretch of the surface as Lumina enters it.
@@ -255,6 +257,9 @@ func update_enemies(dt: float):
 		elif e.kind==8: e.p=e.origin+Vector2(sin(e.t)*75,cos(e.t*1.2)*25)
 		elif e.kind==9: e.p=e.origin+Vector2(sin(e.t*2.1)*150,sin(e.t*3.2)*65)
 		else: e.p=e.origin+Vector2(sin(e.t*1.3)*75,0)
+		if e.get("boss_add",false):
+			e.p.x=clampf(e.p.x,arena.position.x+65,810 if g.stage==3 else arena.end.x-65)
+			e.p.y=clampf(e.p.y,5830 if g.stage==3 else 150,6180 if g.stage==3 else 450)
 		var view=Rect2(camera+Vector2(20,20),Vector2(1240,680))
 		if e.shot<=0 and (not view.has_point(e.p) or (g.boss_active and not arena.has_point(e.p))): e.shot=0.4
 		if e.shot<=0:
@@ -269,9 +274,13 @@ func update_enemies(dt: float):
 
 func update_boss(dt: float):
 	g.boss_intro=maxf(0,g.boss_intro-dt)
-	if g.boss_intro>0 or g.boss_hp<=0: return
+	if g.boss_hp<=0: return
+	var previous=g.boss_phase
+	g.boss_phase=2 if g.boss_hp<=g.boss_max_hp/2 else 1
+	if previous==1 and g.boss_phase==2: encounter.enrage()
+	encounter.update(dt)
+	if g.boss_intro>0 or encounter.overdrive>0: return
 	boss_clock+=dt; g.boss_timer-=dt
-	g.boss_phase=2 if g.boss_hp<g.boss_max_hp/2 else 1
 	if g.stage==2:
 		var phase=fmod(boss_clock,8.0)
 		g.boss_pos=Vector2(arena.position.x+800+sin(boss_clock*0.65)*270,310+sin(boss_clock)*90)
@@ -292,18 +301,19 @@ func update_boss(dt: float):
 	else:
 		# The final boss NEVER leaves its wall mount. Telegraph aimed horizontal beams.
 		if g.boss_timer<=0:
-			g.boss_timer=2.6 if g.boss_phase==2 else 3.3
+			g.boss_timer=2.15 if g.boss_phase==2 else 3.3
 			boss_attack+=1
-			if boss_attack%3==0:
+			if boss_attack%4==0:
 				# Horizontal cannon at Lumina's height: jump over it or drop below it.
 				add_beam(clampf(g.player.y-45,5700,6250),true,70,1.0)
-			elif boss_attack%3==1:
+			elif boss_attack%4==1:
 				# Pillars from the ceiling on Lumina and beside her: keep moving.
-				for dx in [-260,0,260]: add_beam(clampf(g.player.x+dx,60,820),false,110,1.0)
-			else:
+				for dx in ([-260,0,260] if g.boss_phase==1 else [-320,-160,0,160,320]): add_beam(clampf(g.player.x+dx,60,820),false,110,1.0)
+			elif boss_attack%4==2:
 				var from=g.boss_pos-Vector2(40,150)
 				var direction=(g.player-Vector2(0,45)-from).normalized()
 				for angle in [-0.45,-0.22,0,0.22,0.45]: g.enemy_shot(from,direction.rotated(angle)*230,9,"solid" if boss_attack%2==0 and angle==0 else "")
+			else: encounter.launch_missiles()
 			# Phase 2 sweeps the floor too, so the ledges are needed.
 			if g.boss_phase==2 and boss_attack%2==0: add_beam(6255.0,true,70,1.2)
 
@@ -314,7 +324,7 @@ func respawn():
 	g.jumps=0; g.prev_jump=false; g.prev_fire=false; g.prev_dash=false; g.prev_saber=false
 	g.fire_buffer=0; g.drop_buffer=0; g.walk_phase=0; g.aim_time=0; g.saber_air=false
 	for crumble in crumbles: crumble.timer=-1.0; g.platforms[crumble.index]=crumble.rect
-	beams=[]
+	beams=[]; encounter.reset(); g.boss_phase=1
 	if g.boss_active:
 		g.boss_hp=g.boss_max_hp; g.boss_intro=1.3; g.boss_timer=0; boss_clock=0; rays=[]; beams=[]; boss_attack=0
 		if g.stage==3: reset_seals()
@@ -379,6 +389,7 @@ func draw():
 		if e.hp<=0 or not Rect2(camera-Vector2(100,100),Vector2(1480,920)).has_point(e.p): continue
 		if e.get("raider",false): g.action_art.draw_raider(e,e.p+o)
 		else: actor(e.kind-7,e.p+o,Vector2(112,85),Color(2,2,2) if e.flash>0 else Color.WHITE,e.kind!=9 and e.p.x<g.player.x)
+		if e.get("heal_drop",false): g.txt(e.p+o+Vector2(-9,-45),"＋",23,g.CYAN)
 		if e.shot<0.45: g.draw_arc(e.p+o,45,0,TAU,24,Color("ffb55f"),2)
 	for pickup in g.pickups: g.sprite(6,pickup+o,30)
 	if g.boss_active and (g.boss_hp>0 or g.state=="defeat"):
@@ -417,6 +428,10 @@ func draw_surface(o: Vector2):
 		g.txt(Vector2(100,285),"青い跳躍台で上昇。空爆の予告が出たら屋根の下へ。",18,Color("c1d4df"))
 
 func draw_shaft(o: Vector2):
+	for vent in data.vents:
+		var point=Vector2(vent[0],vent[1])+o
+		prop("props-surface",4,Rect2(point,Vector2(vent[2],40)))
+		g.txt(point+Vector2(0,-18),"↑ 上昇台",17,g.CYAN)
 	for y in range(int(camera.y/160)*160,int(camera.y+900),160):
 		for x in [18,1245]:
 			g.draw_rect(Rect2(Vector2(x,y)+o,Vector2(16,115)),Color("4e384d"))
@@ -452,15 +467,15 @@ func draw_final_boss(o: Vector2):
 	for side in [-1,1]: g.draw_line(center+Vector2(side*110,-200),center+Vector2(side*180,250),Color("4d354e"),30)
 	actor(5,center,Vector2(490,610),Color(1.5,1.0,1.2) if g.boss_flash>0 else Color.WHITE)
 	var core=boss_rect().get_center()+o
-	g.draw_circle(core,27,Color(1,0.2,0.65,0.5) if boss_vulnerable() else Color("4b6882"))
-	g.draw_arc(core,48,0,TAU,48,Color("ff82c6") if boss_vulnerable() else Color("79dfe0"),4)
+	encounter.draw(o)
 	for seal in seals:
 		if seal.hp>0:
 			g.draw_line(seal.p+o,core,Color(0.4,1,1,0.35),3)
 			prop("props-shaft",8,Rect2(seal.p+o-Vector2(32,32),Vector2(64,64)))
 			g.draw_arc(seal.p+o,32,g.clock,g.clock+TAU,32,g.CYAN,2)
 			g.txt(seal.p+o+Vector2(-34,-40),"封印装置",15,g.CYAN)
-	g.txt(Vector2(330,210),"封印装置を破壊 → 光るコアを狙え" if not boss_vulnerable() else "コア開放！ 上へ狙って撃ち込め",21,Color("ffe28a"))
+	var instruction="封印装置を破壊 → 光るコアを狙え" if seals.any(func(s): return s.hp>0) else ("コア開放！ 狙って撃ち込め" if boss_vulnerable() else "装甲閉鎖 / 次の開放に備えろ")
+	g.txt(Vector2(330,210),instruction,21,Color("ffe28a"))
 
 func draw_combat(o: Vector2):
 	for b in g.bullets:
@@ -473,12 +488,10 @@ func draw_combat(o: Vector2):
 	for effect in g.fx: g.art_sprite("explosion",mini(5,int(effect.age*12)),effect.p+o+Vector2(0,effect.size/2),effect.size)
 	for p in g.particles: g.draw_circle(p.p+o,3,Color(p.c,clampf(p.life*2,0,1)))
 	for p in g.popups: g.txt(p.p+o+Vector2(-35,-p.age*50),p.text,18,Color(p.c,clampf(2-p.age*2.5,0,1)))
+	if g.dash_timer>0:
+		for i in range(1,4): g.draw_hero(g.player+o-Vector2(g.facing*i*25,0),Color(0.4,1,1,0.35/i))
 	if g.invincible<=0 or int(g.clock*18)%2==0: g.draw_hero(g.player+o)
-	var muzzle=g.muzzle_position()+o
-	if g.muzzle_time>0:
-		g.draw_circle(muzzle,13,Color(0.6,1,1,0.6)); g.draw_line(muzzle,muzzle+g.aim_direction*28,Color.WHITE,5)
-	if g.charge>0.2: g.draw_arc(muzzle,10+g.charge*6,g.clock*5,g.clock*5+TAU*g.charge/g.FULL_CHARGE,32,Color("ffe28a"),3)
-	g.hero_actions.draw_effects(o)
+	g.action_art.draw_player_effects(o)
 	if g.mouse_aim:
 		var aim=g.get_global_mouse_position()
 		g.draw_arc(aim,12,0,TAU,24,g.CYAN,1.5)
@@ -501,7 +514,7 @@ func draw_hud():
 		# A dark plate keeps the name and bar readable over the floor art.
 		g.draw_rect(Rect2(355,636,570,64),Color(0.02,0.03,0.08,0.82))
 		g.draw_rect(Rect2(370,672,540,20),Color("30233f")); g.draw_rect(Rect2(370,672,540*float(g.boss_hp)/g.boss_max_hp,20),g.PINK)
-		g.txt(Vector2(430,660),"SKY VULTURE" if g.stage==2 else "ABYSS MOTHER / 壁面固定要塞",19)
+		g.txt(Vector2(430,660),("SKY VULTURE" if g.stage==2 else "ABYSS MOTHER")+(" / OVERDRIVE" if g.boss_phase==2 else ""),19)
 
 func draw_beam(b: Dictionary, o: Vector2):
 	var col=Color("ff5a3c") if g.stage==2 else Color("ff4fa8")

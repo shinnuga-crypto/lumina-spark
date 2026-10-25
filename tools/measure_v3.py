@@ -77,5 +77,16 @@ for i in range(6):
  right=min(x1-x0,int(xx.max())+5); bottom=min(y1-y0,int(yy.max())+5)
  lance.append([x0+left,y0+top,right-left,bottom-top])
 result['sets']['lance']={'file':'assets/motion/lance-v4.png','regions':lance}
+image=Image.open(ROOT/'assets/campaign/boss-kit-v5.png'); bw,bh=image.size
+boss=[]
+for i in range(6):
+ x=i%3*bw//3; y=0 if i<3 else 532
+ w=bw//3; h=532 if i<3 else bh-532
+ a=np.asarray(image.crop((x,y,x+w,y+h)))
+ yy,xx=np.where(a[:,:,3]>140)
+ left=max(0,int(xx.min())-3);top=max(0,int(yy.min())-3)
+ right=min(w,int(xx.max())+4);bottom=min(h,int(yy.max())+4)
+ boss.append([x+left,y+top,right-left,bottom-top])
+result['sets']['boss']={'file':'assets/campaign/boss-kit-v5.png','regions':boss}
 (ROOT/'assets/motion/v3-regions.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
 print('Saved v3-regions.json; source images unchanged')

@@ -19,7 +19,7 @@ func visual(set_name: String, index: int, action: String) -> Dictionary:
 func hero_visual() -> Dictionary:
 	if g.hurt_pose>0: return {}
 	if g.saber_time>0:
-		if g.saber_kind=="dash": return visual("dash",3,"saber")
+		if g.saber_kind=="dash": return visual("dash",0 if g.saber_total-g.saber_time<g.saber_startup else 3,"saber")
 		var airborne=g.saber_kind=="air" or g.saber_air
 		var action="air_saber" if airborne else "saber"
 		if not g.saber_seq.is_empty():
@@ -75,7 +75,7 @@ func region(set_name: String, index: int) -> Rect2:
 
 func draw_lance(at: Vector2):
 	var elapsed=g.saber_total-g.saber_time
-	if elapsed<g.saber_startup*0.45: return
+	if elapsed<g.saber_startup: return
 	var grow=smoothstep(g.saber_startup*0.45,g.saber_startup,elapsed)
 	var fade=smoothstep(0,g.saber_recovery,g.saber_time)
 	var index=g.saber_tier+(3 if g.saber_time<g.saber_recovery else 0)
@@ -113,6 +113,21 @@ func draw_projectile(b: Dictionary, offset: Vector2) -> bool:
 	if b.get("slash_wave",0)>0:
 		draw_saber_wave(b,offset)
 		return true
+	if uses_charge_art(b):
+		if b.get("pierce",false): g.draw_circle(b.p+offset,36,Color(1,0.85,0.45,0.25))
+		var source=g.art.charge.regions[int(g.clock*18)%6]
+		var size=Vector2(b.r*3.7*source.size.x/source.size.y,b.r*3.7)
+		g.draw_set_transform(b.p+offset,b.v.angle())
+		g.draw_texture_rect_region(g.art.charge.texture,Rect2(-size/2,size),source,Color(1.3,1.1,0.7) if b.get("pierce",false) else Color.WHITE)
+		g.draw_set_transform(Vector2.ZERO)
+		return true
+	if b.enemy and b.get("boss_missile",false):
+		var source=region("boss",5)
+		var size=Vector2(b.r*2.8*source.size.x/source.size.y,b.r*2.8)
+		g.draw_set_transform(b.p+offset,b.v.angle()+PI)
+		g.draw_texture_rect_region(textures.boss,Rect2(-size/2,size),source)
+		g.draw_set_transform(Vector2.ZERO)
+		return true
 	var index=projectile_frame(b)
 	if index<0: return false
 	if index==3:
@@ -127,6 +142,26 @@ func draw_projectile(b: Dictionary, offset: Vector2) -> bool:
 		sprite("airraid",index,center,size)
 		return true
 	return false
+
+func uses_charge_art(b: Dictionary) -> bool:
+	return not b.enemy and b.get("slash_wave",0)==0 and b.damage>=7
+
+func draw_player_effects(offset: Vector2):
+	if g.muzzle_time>0 and g.saber_time<=0:
+		var source=g.art.muzzle.regions[mini(5,int((0.1-g.muzzle_time)*60))]
+		g.draw_set_transform(g.muzzle_position()+offset,g.aim_direction.angle())
+		g.draw_texture_rect_region(g.art.muzzle.texture,Rect2(0,-12,24*source.size.x/source.size.y,24),source)
+		g.draw_set_transform(Vector2.ZERO)
+	g.hero_actions.draw_effects(offset)
+	if g.charge>0.2:
+		var full=g.charge>=g.FULL_CHARGE
+		g.draw_arc(g.muzzle_position()+offset,10+g.charge*6,g.clock*5,g.clock*5+TAU*g.charge/g.FULL_CHARGE,36,Color("ffe28a") if full else (g.CYAN if g.charge>=0.8 else g.PINK),3 if full else 2)
+		if full: g.draw_circle(g.player+offset-Vector2(0,45),46+sin(g.clock*20)*3,Color(1,0.85,0.45,0.12))
+	for mark in g.parry_marks:
+		var age=mark.age/0.28
+		var center=mark.p+offset
+		g.draw_arc(center,12+age*55,0,TAU,40,Color(1,0.9,0.45,1-age),3)
+		g.draw_arc(center,8+age*35,-age*3,PI-age*3,24,Color(1,1,1,1-age),4)
 
 func draw_beam(line: float, horizontal: bool, from: float, to: float, k: float, width: float, charging: bool, col: Color) -> bool:
 	var origin=Vector2(from,line) if horizontal else Vector2(line,from)

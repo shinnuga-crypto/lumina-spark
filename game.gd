@@ -81,13 +81,13 @@ const SABER_BOSS_DAMAGE = [8,10,34]
 # but the charge is counted from the press so charged slashes are not any slower.
 const CHARGE_DELAY = 0.18
 const TAP_COOLDOWN = 0.3
-const CHARGED_COOLDOWN = 0.5
+const CHARGED_COOLDOWN = 0.70
 # Sprite slashes: [frame, seconds, hit round (0 = no hit)] using the original six drawn frames.
 # The blade never shows its way through the arc: a clean wind-up jumps straight to the slashed
 # frame whose smear covers the whole path, and the follow-through is held a little for weight.
 const SEQ_TAP = [[0,0.035,0],[3,0.07,1],[4,0.1,0]]
 # Second cut of the first charge uses the horizontal smear so the two hits read as different strokes.
-const SEQ_DOUBLE = [[0,0.03,0],[3,0.06,1],[4,0.06,0],[5,0.035,0],[2,0.06,2],[4,0.1,0]]
+const SEQ_DOUBLE = [[0,0.12,0],[3,0.06,1],[4,0.06,0],[5,0.08,0],[2,0.06,2],[4,0.1,0]]
 var saber_seq: Array = []
 var saber_round = 0
 var saber_hold = -1.0
@@ -946,7 +946,7 @@ func update_game(dt: float):
 		if charge>=0.8: charge_release = 2 if charge>=FULL_CHARGE else 1
 		if charge>=0.8 and saber_charge_level()>0 and saber_time<=0:
 			# Either release order can trigger the combined move; spend the held saber too.
-			saber_pending=saber_charge_level(); saber_buffer=0.16
+			saber_pending=saber_charge_level(); saber_buffer=maxf(0.16,saber_cooldown+0.05)
 			saber_prepare_weight=smoothstep(0,0.16,saber_charge)
 			saber_charge=0; saber_hold=-1.0
 		charge = 0
@@ -1095,7 +1095,7 @@ func update_game(dt: float):
 		if dash_timer>0: saber_kind="dash"
 		elif saber_kind=="ground" and not grounded: saber_kind="air"
 	# A charged release is not held back by the cooldown of the tap that started the hold.
-	if saber_pending>=0 and saber_buffer>0 and (saber_time<=0 or (saber_pending>0 and saber_tier==0 and saber_time<=saber_recovery)) and (saber_cooldown<=0 or saber_pending>0) and hurt_pose<=0: begin_saber(saber_pending)
+	if saber_pending>=0 and saber_buffer>0 and (saber_time<=0 or (saber_pending>0 and saber_tier==0 and saber_time<=saber_recovery)) and (saber_cooldown<=0 or (saber_pending>0 and saber_tier==0)) and hurt_pose<=0: begin_saber(saber_pending)
 	# A just dodge loads the next shot as a full charge.
 	if shot_request==0 and dodge_charge>0:
 		shot_request = 2
@@ -1758,14 +1758,6 @@ func _draw():
 			if ray.t>0.45: txt(Vector2(x-17,180),"▼",24,PINK)
 	for b in bullets:
 		if action_art.draw_projectile(b,offset): continue
-		if not b.enemy and b.damage>=7:
-			if b.get("pierce",false): draw_circle(b.p+offset,36,Color(1,0.85,0.45,0.25))
-			var region=art.charge.regions[int(clock*18)%6]
-			var size=Vector2(b.r*3.7*region.size.x/region.size.y,b.r*3.7)
-			draw_set_transform(b.p+offset,b.v.angle())
-			draw_texture_rect_region(art.charge.texture,Rect2(-size/2,size),region,Color(1.3,1.1,0.7) if b.get("pierce",false) else Color.WHITE)
-			draw_set_transform(Vector2.ZERO)
-			continue
 		if b.enemy and b.get("solid",false):
 			# Solid shots: orange with a spiked ring, the saber cannot cut them.
 			var c = b.p+offset
@@ -1795,22 +1787,7 @@ func _draw():
 	if dash_timer>0:
 		for i in range(1,4): draw_hero(player+offset-Vector2(facing*i*25,0),Color(0.4,1,1,0.35/i))
 	if invincible<=0 or int(clock*18)%2==0: draw_hero(player+offset)
-	if muzzle_time>0 and saber_time<=0:
-		var region = art.muzzle.regions[mini(5,int((0.1-muzzle_time)*60))]
-		var point = muzzle_position()+offset
-		draw_set_transform(point,aim_direction.angle())
-		draw_texture_rect_region(art.muzzle.texture,Rect2(0,-12,24*region.size.x/region.size.y,24),region)
-		draw_set_transform(Vector2.ZERO)
-	hero_actions.draw_effects(offset)
-	if charge>0.2:
-		var full = charge>=FULL_CHARGE
-		draw_arc(muzzle_position()+offset,10+charge*6,clock*5,clock*5+TAU*charge/FULL_CHARGE,36,Color("ffe28a") if full else (CYAN if charge>=0.8 else PINK),3 if full else 2)
-		if full: draw_circle(player+offset-Vector2(0,45),46+sin(clock*20)*3,Color(1,0.85,0.45,0.12))
-	for mark in parry_marks:
-		var age = mark.age/0.28
-		var center = mark.p+offset
-		draw_arc(center,12+age*55,0,TAU,40,Color(1,0.9,0.45,1-age),3)
-		draw_arc(center,8+age*35,-age*3,PI-age*3,24,Color(1,1,1,1-age),4)
+	action_art.draw_player_effects(offset)
 	draw_field(offset)
 	for gate in gates:
 		if absf(gate.x-player.x)<1500: draw_door(gate,offset)
@@ -2879,6 +2856,7 @@ func enemy_rect(enemy: Dictionary) -> Rect2:
 	return Rect2(enemy.p-Vector2(35,72),Vector2(70,82))
 
 func reset_saber_action():
+	muzzle_time=0
 	saber_charge=0; saber_pending=-1; saber_buffer=0; saber_tier=0
 	saber_kind="ground"; saber_time=0; saber_air=false; prev_saber=false
 	saber_total=0.35; saber_startup=0.07; saber_recovery=0.07; landing_time=0
@@ -2908,7 +2886,7 @@ func read_saber_input(dt: float):
 		if hurt_pose<=0 and saber_charge>=CHARGE_DELAY-0.001:
 			saber_prepare_weight=smoothstep(0,0.16,saber_charge)
 			saber_pending=2 if saber_charge>=FULL_CHARGE-0.001 else 1
-			saber_buffer=0.16
+			saber_buffer=maxf(0.16,saber_cooldown+0.05)
 		saber_charge=0
 		saber_hold=-1.0
 	prev_saber=held
@@ -2934,11 +2912,11 @@ func begin_saber(tier: int):
 			saber_total+=seg[1]
 			saber_recovery=0.0 if seg[2]>0 else saber_recovery+seg[1]
 	else:
-		saber_total=(0.30 if danmaku else 0.35)+saber_tier*0.05
-		saber_startup=(0.02 if danmaku else 0.07)+saber_tier*0.015
-		saber_recovery=0.07+saber_tier*0.01
+		saber_total=[0.30 if danmaku else 0.35,0.48,0.62][saber_tier]
+		saber_startup=[0.02 if danmaku else 0.07,0.12,0.22][saber_tier]
+		saber_recovery=[0.07,0.10,0.12][saber_tier]
 	saber_time=saber_total
-	saber_cooldown=DANMAKU_SABER_COOLDOWN if danmaku else (TAP_COOLDOWN if saber_tier==0 else CHARGED_COOLDOWN)
+	saber_cooldown=(DANMAKU_SABER_COOLDOWN if danmaku else TAP_COOLDOWN) if saber_tier==0 else ((0.55 if saber_tier==1 else 0.80) if danmaku else (CHARGED_COOLDOWN if saber_tier==1 else 1.0))
 	if saber_tier==0 and not danmaku:
 		if grounded and absf(velocity.x)<15 and dash_timer<=0:
 			saber_cooldown+=saber_spam*SPAM_STEP
@@ -3097,7 +3075,7 @@ func register_enemy_defeat(enemy: Dictionary):
 	hitstop=0.07 if enemy.kind==6 else 0.045
 	fx.append({"p":enemy.p-Vector2(0,40),"age":0.0,"size":170.0 if enemy.kind==6 else 100.0})
 	burst(enemy.p,Color("ffc578"),30 if enemy.kind==6 else 18)
-	if kills%4==0 or enemy.kind==6:
+	if kills%4==0 or enemy.kind==6 or enemy.get("heal_drop",false):
 		var drop=enemy.p-Vector2(0,25)
 		var floor_y=610.0 if stage!=3 else campaign.height
 		for platform in platforms:

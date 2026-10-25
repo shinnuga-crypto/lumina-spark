@@ -10,7 +10,7 @@ func fresh():
 	g.player=Vector2(400,610); g.grounded=true; g.velocity=Vector2.ZERO; g.facing=1; g.aim_override=Vector2.ZERO
 func run():
 	g=load("res://game.gd").new(); root.add_child(g)
-	check(g.action_art.textures.size()==9,"nine atlas textures load")
+	check(g.action_art.textures.size()==10,"ten atlas textures load")
 	var count=0
 	for key in g.action_art.sets:
 		var info=g.action_art.sets[key]
@@ -19,7 +19,7 @@ func run():
 			var r=f.region if f is Dictionary else f
 			check(r[0]>=0 and r[1]>=0 and r[0]+r[2]<=size.x and r[1]+r[3]<=size.y,"region stays in atlas "+key)
 			count+=1
-	check(count==56,"24 character frames and 32 VFX/airraid regions")
+	check(count==62,"24 character frames and 38 VFX/boss regions")
 	for airborne in [false,true]:
 		for tier in range(3):
 			fresh(); g.grounded=not airborne; g.begin_saber(tier)
@@ -39,6 +39,7 @@ func run():
 	g.aim_override=Vector2(1,-1).normalized(); g.update_aim()
 	check(not g.hero_visual().has("texture"),"angled dash fire keeps cannon bones")
 	g.aim_override=Vector2.ZERO; g.begin_saber(2)
+	g.saber_time=g.saber_total-g.saber_startup-0.025
 	check(g.hero_visual().v3=="dash" and g.hero_visual().frame==3,"dash slash has its own thrust art")
 	fresh(); g.saber_charge=1.6
 	check(not g.hero_visual().has("texture") and g.saber_blade_length()==76,"stationary MAX keeps shared rig and long blade")
@@ -52,4 +53,4 @@ func run():
 	check(not g.saber_catches(g.player+Vector2(-170,-55),6) and g.saber_catches(g.player+Vector2(170,-55),6),"air MAX only cuts the forward side")
 	print("ART V3 TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
 	g.queue_free(); await process_frame; g=null; await process_frame
-	quit(0 if errors.is_empty() else 1)
+	call_deferred("quit",0 if errors.is_empty() else 1)
