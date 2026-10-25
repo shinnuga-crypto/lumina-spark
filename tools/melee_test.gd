@@ -26,12 +26,13 @@ func run():
 	check(g.hero_actions.weapon!=null,"GPTImage weapon loads")
 	for tier in range(3):
 		fresh(); press(KEY_K,true); step([3,52,100][tier])
-		check(g.saber_time==0 and not g.saber_active(),"held saber has no passive attack %d"%tier)
+		# Tier 0 is a tap: it slashes on the press. Longer holds have finished that tap and only charge.
+		if tier>0: check(g.saber_time==0 and not g.saber_active(),"held saber has no passive attack %d"%tier)
 		var prep=g.walk_arm(0,false).muzzle
 		press(KEY_K,false); step(1)
 		check(g.saber_tier==tier and g.saber_time>0,"release selects charge tier %d"%tier)
 		if tier>0: check(g.walk_arm(0,false).muzzle.distance_to(prep)<12,"charged pose flows into release")
-		check(g.saber_reach()==[100.0,155.0,210.0][tier],"tier reach")
+		check(g.saber_reach()==[100.0,125.0,210.0][tier],"tier reach")
 		g.saber_time=g.saber_total-g.saber_startup-0.01
 		g.spawn_enemy(g.player+Vector2(g.saber_reach()-8,0),0,0); var enemy=g.enemies[-1]; enemy.hp=100
 		g.update_saber(); g.update_saber()
@@ -76,6 +77,17 @@ func run():
 	check(returning.distance_to(g.walk_arm(0,true).muzzle)<0.1,"gun returns continuously after recovery")
 	fresh(); press(KEY_K,true); step(70); g.invincible=0; g.hurt(1)
 	check(g.saber_charge==0 and g.saber_pending<0 and g.saber_time==0,"damage cancels charge and queued slash")
+	release()
+	fresh(); press(KEY_K,true); step(1)
+	check(g.saber_time>0 and g.saber_tier==0 and not g.saber_seq.is_empty(),"press slashes at once with drawn frames")
+	release(); fresh(); press(KEY_K,true); step(49); press(KEY_K,false); step(1)
+	check(g.saber_tier==1,"charge is counted from the press, not from the delay")
+	fresh(); activate(1)
+	g.saber_time=g.saber_total
+	g.spawn_enemy(g.player+Vector2(80,0),0,0); var target=g.enemies[-1]; target.hp=100
+	while g.saber_time>0:
+		g.update_saber(); g.saber_time=maxf(0,g.saber_time-1.0/60)
+	check(target.hp==100-2*g.SABER_DAMAGE[1],"first charge cuts twice")
 	release()
 	print("MELEE TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
 	quit(0 if errors.is_empty() else 1)

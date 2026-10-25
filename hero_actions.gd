@@ -39,7 +39,7 @@ func charge_weight() -> float:
 
 # The blade snaps through the front of the arc and eases into the follow-through.
 func strike_curve() -> float:
-	return 1-pow(1-swing_progress(),3)
+	return 1-pow(1-swing_progress(),5)
 
 func run_factor() -> float:
 	return clampf(absf(g.velocity.x)/285.0,0,1) if g.grounded else 0.0
@@ -79,9 +79,10 @@ func leg(phase: float, side: String) -> Dictionary:
 	if not g.grounded:
 		var rising=clampf(-g.velocity.y/550.0,0,1)
 		var falling=clampf(g.velocity.y/700.0,0,1)
-		var apex=Vector2(15,-22) if side=="near" else Vector2(-16,-18)
-		var ascend=Vector2(18,-29) if side=="near" else Vector2(-18,-22)
-		var descend=Vector2(12,-10) if side=="near" else Vector2(-13,-15)
+		# Knees pulled up like the drawn jump pose; the legs open toward the ground only when falling.
+		var apex=Vector2(8,-28) if side=="near" else Vector2(-12,-25)
+		var ascend=Vector2(11,-34) if side=="near" else Vector2(-6,-31)
+		var descend=Vector2(15,-16) if side=="near" else Vector2(-15,-15)
 		value.ankle=apex.lerp(ascend,rising).lerp(descend,falling)
 		value.pitch=-0.1+rising*0.14-falling*0.04 if side=="near" else 0.08-rising*0.15
 	elif resting:
@@ -141,7 +142,8 @@ func sword_pose(at: Vector2, phase: float) -> Dictionary:
 	var hand=at+Vector2(arm.muzzle.x*g.facing,arm.muzzle.y)
 	var local=Vector2.RIGHT.rotated(sword_angle())
 	var direction=Vector2(local.x*g.facing,local.y)
-	var length=76.0+g.saber_tier*55.0
+	# The blade keeps its size; a full charge shows its reach through the afterimage instead.
+	var length=76.0+(12.0 if g.saber_tier==2 else 0.0)
 	if g.saber_time<=0: length=76.0
 	elif progress_override<0:
 		# The beam ignites as the swing starts instead of hanging out at full length in the wind-up.
@@ -171,6 +173,7 @@ func draw_effects(offset: Vector2):
 		var charge_col=Color("ffe291") if tier==2 else (g.CYAN if tier==1 else g.PINK)
 		g.draw_arc(pose.hand,14+g.saber_charge*6,g.clock*4,g.clock*4+TAU*g.saber_charge/g.FULL_CHARGE,32,charge_col,2+tier)
 		if tier>0: g.draw_circle(pose.hand,22+sin(g.clock*14)*3,Color(charge_col,0.16))
+	if not g.saber_seq.is_empty(): return
 	if g.saber_kind!="dash" and g.saber_time>0:
 		draw_trail(g.player+offset,col)
 		return
@@ -195,7 +198,9 @@ func draw_trail(at: Vector2, col: Color):
 	if p<=0: return
 	var fade=smoothstep(0,g.saber_recovery+0.04,g.saber_time)
 	var span=(0.7 if g.saber_kind=="air" else 0.55)+g.saber_tier*0.08
-	var start=maxf(0,p-span)
+	# No smear during the wind-up: the afterimage starts once the blade comes over the top.
+	var start=maxf(1-pow(0.7,0.2),p-span)
+	if p<=start: return
 	var samples=14
 	var inner: Array[Vector2]=[]
 	var outer: Array[Vector2]=[]
@@ -204,16 +209,19 @@ func draw_trail(at: Vector2, col: Color):
 		var pose=sword_pose(at,g.walk_phase)
 		# Thickest in the middle of the arc, tapering to points at both ends: a crescent.
 		var t=float(i)/samples
-		inner.append(pose.tip-pose.direction*pose.length*(0.08+0.5*sin(t*PI)*smoothstep(0,0.35,t)))
-		outer.append(pose.tip+pose.direction*6)
+		# The afterimage reaches as far as the hit does, well past the blade on a full charge.
+		var reach=maxf(pose.length+6,g.saber_reach()-14)
+		var edge=pose.hand+pose.direction*reach
+		inner.append(edge-pose.direction*reach*(0.06+0.55*sin(t*PI)*smoothstep(0,0.35,t)))
+		outer.append(edge)
 	progress_override=-1.0
 	var white=Color(1,1,1)
 	# Saturated body colour so the crescent reads as a solid slash, not a pale sheet.
-	col=[Color("2ee6d6"),Color("46f5b4"),Color("ffc94d")][g.saber_tier]
+	col=[Color("2ee6d6"),Color("46f5b4"),Color("ffcf3a")][g.saber_tier]
 	for i in range(samples):
-		var a0=pow(float(i)/samples,1.4)*fade
-		var a1=pow(float(i+1)/samples,1.4)*fade
-		g.draw_polygon(PackedVector2Array([inner[i],inner[i+1],outer[i+1],outer[i]]),PackedColorArray([Color(col,0.35*a0),Color(col,0.35*a1),Color(col,0.92*a1),Color(col,0.92*a0)]))
+		var a0=pow(float(i)/samples,0.8)*fade
+		var a1=pow(float(i+1)/samples,0.8)*fade
+		g.draw_polygon(PackedVector2Array([inner[i],inner[i+1],outer[i+1],outer[i]]),PackedColorArray([Color(col,0.5*a0),Color(col,0.5*a1),Color(col,0.95*a1),Color(col,0.95*a0)]))
 		# Bright rim along the path of the tip.
 		var rim0=outer[i]+(inner[i]-outer[i])*0.35
 		var rim1=outer[i+1]+(inner[i+1]-outer[i+1])*0.35

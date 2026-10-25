@@ -63,9 +63,24 @@ var saber_prepare_weight = 0.0
 var landing_time = 0.0
 var hero_actions
 var rig_tint = Color.WHITE
-const SABER_REACH = [100.0,155.0,210.0]
-const SABER_DAMAGE = [6,14,24]
-const SABER_BOSS_DAMAGE = [8,18,32]
+const SABER_REACH = [100.0,125.0,210.0]
+# Per hit. The first charge hits twice, the full charge once and hard.
+const SABER_DAMAGE = [6,8,26]
+const SABER_BOSS_DAMAGE = [8,10,34]
+# A press slashes at once; holding only starts to show a charge after this delay,
+# but the charge is counted from the press so charged slashes are not any slower.
+const CHARGE_DELAY = 0.18
+const TAP_COOLDOWN = 0.3
+const CHARGED_COOLDOWN = 0.5
+# Sprite slashes: [frame, seconds, hit round (0 = no hit)] using the original six drawn frames.
+# The blade never shows its way through the arc: a clean wind-up jumps straight to the slashed
+# frame whose smear covers the whole path, and the follow-through is held a little for weight.
+const SEQ_TAP = [[0,0.035,0],[3,0.07,1],[4,0.1,0]]
+# Second cut of the first charge uses the horizontal smear so the two hits read as different strokes.
+const SEQ_DOUBLE = [[0,0.03,0],[3,0.06,1],[4,0.06,0],[5,0.035,0],[2,0.06,2],[4,0.1,0]]
+var saber_seq: Array = []
+var saber_round = 0
+var saber_hold = -1.0
 var parries = 0
 var font: Font
 var atlas: Texture2D
@@ -1055,7 +1070,8 @@ func update_game(dt: float):
 	if saber_time>0:
 		if dash_timer>0: saber_kind="dash"
 		elif saber_kind=="ground" and not grounded: saber_kind="air"
-	if saber_pending>=0 and saber_buffer>0 and saber_time<=0 and saber_cooldown<=0 and hurt_pose<=0: begin_saber(saber_pending)
+	# A charged release is not held back by the cooldown of the tap that started the hold.
+	if saber_pending>=0 and saber_buffer>0 and saber_time<=0 and (saber_cooldown<=0 or saber_pending>0) and hurt_pose<=0: begin_saber(saber_pending)
 	# A just dodge loads the next shot as a full charge.
 	if shot_request==0 and dodge_charge>0:
 		shot_request = 2
@@ -1559,6 +1575,8 @@ func hurt(amount: int):
 	saber_time = 0
 	saber_charge=0
 	saber_pending=-1
+	# The hit also cancels the held button until it is pressed again.
+	saber_hold=-1.0
 	velocity = Vector2(-facing*250,-180)
 	dash_timer = 0
 	sound("hit")
@@ -2314,18 +2332,22 @@ func motion_test():
 	test_key(KEY_RIGHT,false)
 	test_key(KEY_V,false)
 	update_game(1.0/60)
+	# A press slashes at once; the charge only shows after the delay and a short hold releases nothing.
 	test_key(KEY_K,true)
 	update_game(1.0/60)
-	if saber_time>0 or saber_charge<=0: errors.append("saber hold prepares without attacking")
+	if saber_time<=0 or saber_charge>0: errors.append("saber press slashes at once")
+	for f in range(20): update_game(1.0/60)
+	if saber_time>0 or saber_charge<CHARGE_DELAY: errors.append("held saber charges after the tap")
 	test_key(KEY_K,false)
 	update_game(1.0/60)
-	if saber_time<=0 or saber_active(): errors.append("saber release startup")
+	if saber_time>0 or saber_pending>=0: errors.append("short hold releases nothing")
+	begin_saber(0)
 	test_key(KEY_K,false)
 	bullets.clear()
 	for direction in [-1,1]:
 		facing=direction
 		saber_facing=direction
-		saber_time=0.25
+		saber_time=saber_total-saber_startup-0.005
 		var front=player+Vector2(direction*70,-60)
 		var back=player+Vector2(-direction*70,-60)
 		bullets.append({"p":front,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
@@ -2337,7 +2359,7 @@ func motion_test():
 		bullets.clear()
 	saber_time=0.06
 	if saber_active(): errors.append("saber recovery")
-	saber_time=0.21
+	saber_time=saber_total-saber_startup-0.01
 	facing=1
 	saber_facing=1
 	enemies.clear()
@@ -2358,7 +2380,7 @@ func motion_test():
 	test_key(KEY_K,false)
 	update_game(1.0/60)
 	if grounded or not saber_air or hero_visual().name!="air_saber": errors.append("jump and air saber input")
-	saber_time=0.21
+	saber_time=saber_total-saber_startup-0.005
 	saber_facing=1
 	bullets.clear()
 	bullets.append({"p":player+Vector2(70,-60),"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
@@ -2377,7 +2399,7 @@ func motion_test():
 	update_game(1.0/60)
 	if saber_time>0: errors.append("saber cooldown blocks")
 	saber_cooldown=0
-	saber_time=0.21
+	saber_time=saber_total-saber_startup-0.005
 	saber_facing=1
 	facing=1
 	bullets.clear()
@@ -2385,7 +2407,7 @@ func motion_test():
 	update_bullets(0)
 	if bullets.size()!=1: errors.append("solid ignores saber")
 	bullets.clear()
-	saber_time=0.15
+	saber_time=saber_total-0.09
 	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
 	update_bullets(0)
 	if not bullets.is_empty(): errors.append("late parry cancels only")
@@ -2433,7 +2455,8 @@ func motion_test():
 	bullets.clear()
 	enemies.clear()
 	spawn_enemy(player+Vector2(320,-230),1,0)
-	saber_time=0.26
+	begin_saber(0)
+	saber_time=saber_total-saber_startup-0.005
 	saber_facing=1
 	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
 	update_bullets(0)
@@ -2589,6 +2612,16 @@ func capture_motion():
 
 func hero_visual() -> Dictionary:
 	if hurt_pose<=0:
+		if saber_time>0 and not saber_seq.is_empty():
+			var sprite_name="air_saber" if saber_kind=="air" or saber_air else "saber"
+			var index=saber_segment()[0]
+			var meta=motion_meta[sprite_name].frames[index]
+			return {"texture":motions[sprite_name][index],"region":Rect2(0,0,256,256),"anchor":Vector2(meta.anchor[0],meta.anchor[1]),"muzzle":Vector2(meta.muzzle[0],meta.muzzle[1]),"scale":motion_meta[sprite_name].scale,"frame":index,"name":sprite_name}
+		# A plain jump uses the drawn tucked-leg jump pose; aiming in the air switches to the bones.
+		if not grounded and saber_time<=0 and saber_charge<=0 and dash_timer<=0 and not walk_aiming():
+			var socket=motion_meta.legacy.jump
+			var calibrated=motion_meta.legacy_pose.jump
+			return {"texture":atlas,"region":regions[3],"anchor":Vector2(calibrated.anchor[0],calibrated.anchor[1]),"muzzle":Vector2(socket[0],socket[1])-regions[3].position,"scale":calibrated.scale,"name":"jump","frame":0}
 		var action="idle_rig"
 		if saber_time>0: action="air_saber" if saber_kind=="air" or saber_air else "saber"
 		elif saber_charge>0: action="saber_charge"
@@ -2816,39 +2849,71 @@ func reset_saber_action():
 	saber_total=0.35; saber_startup=0.07; saber_recovery=0.07; landing_time=0
 	saber_prepare_weight=0
 	charge_release=-1
+	saber_seq=[]; saber_round=0; saber_hold=-1.0
 
 func read_saber_input(dt: float):
 	var held=act("saber")
 	if held:
-		if not prev_saber: saber_charge=0
-		if saber_time<=0 and hurt_pose<=0:
-			var old=saber_charge
-			saber_charge=minf(FULL_CHARGE,saber_charge+dt)
-			if (old<0.8 and saber_charge>=0.8) or (old<FULL_CHARGE and saber_charge>=FULL_CHARGE): sound("charge")
+		if not prev_saber:
+			# Slash on the press itself so a quick tap or a panic reflect comes out at once.
+			saber_hold=0.0
+			saber_charge=0
+			if hurt_pose<=0:
+				saber_prepare_weight=0
+				saber_pending=0
+				saber_buffer=0.16
+		elif saber_hold>=0:
+			saber_hold+=dt
+			if saber_hold>=CHARGE_DELAY and hurt_pose<=0:
+				var old=saber_charge
+				saber_charge=minf(FULL_CHARGE,saber_hold)
+				if (old<0.8 and saber_charge>=0.8) or (old<FULL_CHARGE and saber_charge>=FULL_CHARGE): sound("charge")
 	elif prev_saber:
-		if hurt_pose<=0 and saber_time<=saber_recovery+0.05:
+		if hurt_pose<=0 and saber_charge>=0.8:
 			saber_prepare_weight=smoothstep(0,0.16,saber_charge)
-			saber_pending=2 if saber_charge>=FULL_CHARGE-0.001 else (1 if saber_charge>=0.8 else 0)
+			saber_pending=2 if saber_charge>=FULL_CHARGE-0.001 else 1
 			saber_buffer=0.16
 		saber_charge=0
+		saber_hold=-1.0
 	prev_saber=held
 
 func begin_saber(tier: int):
 	saber_tier=clampi(tier,0,2)
 	saber_kind="dash" if dash_timer>0 else ("ground" if grounded else "air")
 	saber_air=not grounded
-	saber_total=(0.30 if danmaku else 0.35)+saber_tier*0.05
-	saber_startup=(0.02 if danmaku else 0.07)+saber_tier*0.015
-	saber_recovery=0.07+saber_tier*0.01
+	saber_seq=[]
+	saber_round=0
+	if saber_kind!="dash" and saber_tier<2:
+		# Tap and first charge play the drawn frames; the full charge keeps the big boned swing.
+		saber_seq=SEQ_TAP if saber_tier==0 else SEQ_DOUBLE
+		saber_total=0.0; saber_startup=-1.0; saber_recovery=0.0
+		for seg in saber_seq:
+			if seg[2]>0 and saber_startup<0: saber_startup=saber_total
+			saber_total+=seg[1]
+			saber_recovery=0.0 if seg[2]>0 else saber_recovery+seg[1]
+	else:
+		saber_total=(0.30 if danmaku else 0.35)+saber_tier*0.05
+		saber_startup=(0.02 if danmaku else 0.07)+saber_tier*0.015
+		saber_recovery=0.07+saber_tier*0.01
 	saber_time=saber_total
-	saber_cooldown=(DANMAKU_SABER_COOLDOWN+saber_tier*0.16) if danmaku else SABER_COOLDOWN+saber_tier*0.12
+	saber_cooldown=DANMAKU_SABER_COOLDOWN if danmaku else (TAP_COOLDOWN if saber_tier==0 else CHARGED_COOLDOWN)
 	saber_facing=facing
 	saber_hits.clear(); saber_boss_hit=false; saber_pending=-1; saber_buffer=0
 	muzzle_time=0
 	sound("charge" if tier>0 else "dash")
 
+# For a drawn slash: [frame, hit round] at the current moment.
+func saber_segment() -> Array:
+	var t=saber_total-saber_time
+	for seg in saber_seq:
+		if t<seg[1]: return [seg[0],seg[2]]
+		t-=seg[1]
+	return [saber_seq[-1][0],0] if not saber_seq.is_empty() else [0,0]
+
 func saber_active() -> bool:
-	return state=="play" and saber_time>saber_recovery and saber_time<=saber_total-saber_startup and hurt_pose<=0
+	if state!="play" or hurt_pose>0 or saber_time<=0: return false
+	if not saber_seq.is_empty(): return saber_segment()[1]>0
+	return saber_time>saber_recovery and saber_time<=saber_total-saber_startup
 
 func saber_just() -> bool:
 	return saber_active() and saber_total-saber_time<saber_startup+(DANMAKU_JUST_WINDOW if danmaku else JUST_WINDOW)
@@ -2881,6 +2946,13 @@ func saber_catches(point: Vector2, radius: float) -> bool:
 
 func update_saber():
 	if not saber_active(): return
+	# The double slash may hit each target once per swing.
+	var hit_round=saber_segment()[1] if not saber_seq.is_empty() else 1
+	if hit_round!=saber_round:
+		if saber_round>0:
+			saber_hits.clear()
+			saber_boss_hit=false
+		saber_round=hit_round
 	for i in range(enemies.size()):
 		var enemy = enemies[i]
 		if enemy.hp<=0 or i in saber_hits or not saber_contacts(enemy_rect(enemy)): continue
