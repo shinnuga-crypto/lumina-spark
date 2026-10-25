@@ -1,3 +1,10 @@
+## 2026-10-25 GPT（v1.4.0公開完了）
+
+- https://github.com/shinnuga-crypto/lumina-spark/releases/tag/v1.4.0 を公開。リポジトリpublic、非draft・非prerelease、EXE・ZIP・SHA256SUMS.txtの3添付uploadedとサイズ・全SHA-256一致をGitHub APIで確認。
+- ソースはこのゲームだけをsubtree抽出し、9c24d4b6b25322c55cb42fdf37210b9ecd3be90dをmainへ通常push。親リポジトリにremote追加なし。旧Releaseは保持。
+- 全11ソース検査、単体EXE SELF/MOTION、内蔵PCK ART V3/CHARGE V4/BOSS V5・20描画を確認済み。配布物のサイズとハッシュは直下の準備記録を参照。
+- 依頼の未完了なし。実機パッド・別PC・人の難易度/聴感は未確認。次：公開版の試遊結果に応じて調整。今後の公開更新は再び明示依頼時のみ。
+
 ## 2026-10-25 GPT（v1.4.0配布準備）
 
 - ユーザーの公開依頼により最新版をv1.4.0へ。README・操作説明・Release本文とビルド既定版を更新。今回以降の公開は引き続き明示依頼時のみ。
