@@ -61,11 +61,15 @@ func hip(phase: float) -> Vector2:
 		var still=1-run_factor()
 		value.y+=(1.5+sin(g.clock*2.2)*0.8)*still+5*maxf(charge_weight(),prepared_entry())*still+9*lunge()
 		value.x+=-2*still+6*lunge()
+	# Dash: hips low and thrown forward over the front foot.
+	if g.dash_timer>0: value=Vector2(6,-43)
 	return value
 
 func torso_angle() -> float:
 	var base=g.walk_lean()
 	if not g.grounded: base*=0.6
+	# Dash: an extreme forward lean, chest leading.
+	if g.dash_timer>0: base=0.72
 	var twist=0.0
 	if g.saber_kind=="dash": twist=0.22
 	elif g.saber_kind=="air": twist=sin(swing_progress()*TAU)*0.16
@@ -80,9 +84,9 @@ func leg(phase: float, side: String) -> Dictionary:
 		var rising=clampf(-g.velocity.y/550.0,0,1)
 		var falling=clampf(g.velocity.y/700.0,0,1)
 		# Knees pulled up like the drawn jump pose; the legs open toward the ground only when falling.
-		var apex=Vector2(8,-28) if side=="near" else Vector2(-12,-25)
-		var ascend=Vector2(11,-34) if side=="near" else Vector2(-6,-31)
-		var descend=Vector2(15,-16) if side=="near" else Vector2(-15,-15)
+		var apex=Vector2(6,-31) if side=="near" else Vector2(-6,-27)
+		var ascend=Vector2(9,-36) if side=="near" else Vector2(-2,-33)
+		var descend=Vector2(14,-20) if side=="near" else Vector2(-13,-17)
 		value.ankle=apex.lerp(ascend,rising).lerp(descend,falling)
 		value.pitch=-0.1+rising*0.14-falling*0.04 if side=="near" else 0.08-rising*0.15
 	elif resting:
@@ -97,12 +101,17 @@ func leg(phase: float, side: String) -> Dictionary:
 		value.ankle=value.ankle.lerp(target,step)
 		value.pitch=lerpf(value.pitch,0.0 if side=="near" else 0.3,step)
 	if g.dash_timer>0:
-		value.ankle=Vector2(-25,-10) if side=="far" else Vector2(15,-23)
-		value.pitch=-0.18 if side=="far" else 0.12
+		# Back leg stretched out behind, toe driving off the ground; front knee driven up and forward.
+		value.ankle=Vector2(-36,-12) if side=="far" else Vector2(20,-30)
+		value.pitch=0.55 if side=="far" else -0.2
 	value.knee=g.gait_knee(hip(phase),value.ankle)
 	return value
 
 func arm_adjust(gun: bool, angle: float, bend: float) -> Vector2:
+	if g.dash_timer>0 and g.saber_time<=0 and g.saber_charge<=0:
+		# Dash: arms flung back behind the lean unless the cannon is aiming.
+		if not gun: return Vector2(1.35,0.45)
+		if not g.walk_aiming(): return Vector2(0.75,0.35)
 	var weight=swing_weight()
 	if gun:
 		# The cannon lowers during the swing; a shot never originates from an unrelated pose.
@@ -173,7 +182,9 @@ func draw_effects(offset: Vector2):
 		var charge_col=Color("ffe291") if tier==2 else (g.CYAN if tier==1 else g.PINK)
 		g.draw_arc(pose.hand,14+g.saber_charge*6,g.clock*4,g.clock*4+TAU*g.saber_charge/g.FULL_CHARGE,32,charge_col,2+tier)
 		if tier>0: g.draw_circle(pose.hand,22+sin(g.clock*14)*3,Color(charge_col,0.16))
-	if not g.saber_seq.is_empty(): return
+	if not g.saber_seq.is_empty():
+		draw_sweep(g.player+offset)
+		return
 	if g.saber_kind!="dash" and g.saber_time>0:
 		draw_trail(g.player+offset,col)
 		return
@@ -226,3 +237,31 @@ func draw_trail(at: Vector2, col: Color):
 		var rim0=outer[i]+(inner[i]-outer[i])*0.35
 		var rim1=outer[i+1]+(inner[i+1]-outer[i+1])*0.35
 		g.draw_polygon(PackedVector2Array([rim0,rim1,outer[i+1],outer[i]]),PackedColorArray([Color(white,0.0),Color(white,0.0),Color(white,0.95*a1),Color(white,0.95*a0)]))
+
+# The big front slash over the drawn frames: a crescent that grows along the swept arc,
+# brightest at the leading edge, matching exactly the area that hits.
+func draw_sweep(at: Vector2):
+	var sweep=g.slash_sweep()
+	if sweep.is_empty(): return
+	var center=at-Vector2(0,55)
+	var radius=g.saber_reach()
+	var col=[Color("2ee6d6"),Color("46f5b4"),Color("ffcf3a")][g.saber_tier]
+	var white=Color(1,1,1)
+	var samples=16
+	var points_in: Array[Vector2]=[]
+	var points_out: Array[Vector2]=[]
+	for i in range(samples+1):
+		var t=float(i)/samples
+		var angle=lerpf(sweep.from,sweep.to,t)
+		var dir=Vector2(cos(angle)*g.saber_facing,sin(angle))
+		# Thick in the middle of the stroke, tapering to a point at the tail.
+		var thickness=radius*(0.1+0.55*sin(t*PI*0.5)*smoothstep(0,0.5,t))
+		points_out.append(center+dir*radius)
+		points_in.append(center+dir*(radius-thickness))
+	for i in range(samples):
+		var a0=pow(float(i)/samples,0.7)*sweep.fade
+		var a1=pow(float(i+1)/samples,0.7)*sweep.fade
+		g.draw_polygon(PackedVector2Array([points_in[i],points_in[i+1],points_out[i+1],points_out[i]]),PackedColorArray([Color(col,0.4*a0),Color(col,0.4*a1),Color(col,0.95*a1),Color(col,0.95*a0)]))
+		var rim0=points_out[i].lerp(points_in[i],0.3)
+		var rim1=points_out[i+1].lerp(points_in[i+1],0.3)
+		g.draw_polygon(PackedVector2Array([rim0,rim1,points_out[i+1],points_out[i]]),PackedColorArray([Color(white,0.0),Color(white,0.0),Color(white,a1),Color(white,a0)]))

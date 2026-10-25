@@ -63,7 +63,16 @@ var saber_prepare_weight = 0.0
 var landing_time = 0.0
 var hero_actions
 var rig_tint = Color.WHITE
-const SABER_REACH = [100.0,125.0,210.0]
+const SABER_REACH = [140.0,150.0,220.0]
+# Drawn slashes sweep a front arc (local angles, 0 = forward, + = down) per hit round:
+# an overhead cut down through the front, and the double's second cut sweeping back up.
+const SWEEP_GROUND = [[-2.1,1.0],[1.0,-1.3]]
+const SWEEP_AIR = [[-2.3,1.3],[1.2,-1.6]]
+const SWEEP_LINGER = 0.12
+# Standing still and mashing makes each tap wait longer; moving, jumping or a pause resets it.
+const SPAM_STEP = 0.12
+var saber_spam = 0
+var saber_spam_timer = 0.0
 # Per hit. The first charge hits twice, the full charge once and hard.
 const SABER_DAMAGE = [6,8,26]
 const SABER_BOSS_DAMAGE = [8,10,34]
@@ -889,6 +898,8 @@ func update_game(dt: float):
 	if saber_buffer<=0: saber_pending=-1
 	aim_time = maxf(0,aim_time-dt)
 	saber_cooldown = maxf(0,saber_cooldown-dt)
+	saber_spam_timer = maxf(0,saber_spam_timer-dt)
+	if saber_spam_timer<=0 or not grounded or absf(velocity.x)>=15 or dash_timer>0: saber_spam = 0
 	hurt_pose = maxf(0,hurt_pose-dt)
 	muzzle_time = maxf(0,muzzle_time-dt)
 	for m in moving:
@@ -1501,6 +1512,8 @@ func update_bullets(dt: float):
 					b.erase("home")
 					score+=100
 					just_reflections+=1
+					# A timed parry eases the mashing penalty: precise swings are not punished.
+					saber_spam=maxi(0,saber_spam-1)
 					parry_marks.append({"p":b.p,"age":0.0})
 					burst(b.p,Color("ffe28a"),12)
 					popup(b.p,"JUST!",Color("ffe28a"))
@@ -2347,7 +2360,7 @@ func motion_test():
 	for direction in [-1,1]:
 		facing=direction
 		saber_facing=direction
-		saber_time=saber_total-saber_startup-0.005
+		saber_time=saber_total-saber_startup-0.025
 		var front=player+Vector2(direction*70,-60)
 		var back=player+Vector2(-direction*70,-60)
 		bullets.append({"p":front,"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
@@ -2359,7 +2372,7 @@ func motion_test():
 		bullets.clear()
 	saber_time=0.06
 	if saber_active(): errors.append("saber recovery")
-	saber_time=saber_total-saber_startup-0.01
+	saber_time=saber_total-saber_startup-0.025
 	facing=1
 	saber_facing=1
 	enemies.clear()
@@ -2380,7 +2393,7 @@ func motion_test():
 	test_key(KEY_K,false)
 	update_game(1.0/60)
 	if grounded or not saber_air or hero_visual().name!="air_saber": errors.append("jump and air saber input")
-	saber_time=saber_total-saber_startup-0.005
+	saber_time=saber_total-saber_startup-0.025
 	saber_facing=1
 	bullets.clear()
 	bullets.append({"p":player+Vector2(70,-60),"v":Vector2.ZERO,"enemy":true,"damage":2,"r":5.0,"life":2.0})
@@ -2399,7 +2412,7 @@ func motion_test():
 	update_game(1.0/60)
 	if saber_time>0: errors.append("saber cooldown blocks")
 	saber_cooldown=0
-	saber_time=saber_total-saber_startup-0.005
+	saber_time=saber_total-saber_startup-0.025
 	saber_facing=1
 	facing=1
 	bullets.clear()
@@ -2456,7 +2469,7 @@ func motion_test():
 	enemies.clear()
 	spawn_enemy(player+Vector2(320,-230),1,0)
 	begin_saber(0)
-	saber_time=saber_total-saber_startup-0.005
+	saber_time=saber_total-saber_startup-0.025
 	saber_facing=1
 	enemy_shot(player+Vector2(70,-60),Vector2.ZERO)
 	update_bullets(0)
@@ -2897,6 +2910,12 @@ func begin_saber(tier: int):
 		saber_recovery=0.07+saber_tier*0.01
 	saber_time=saber_total
 	saber_cooldown=DANMAKU_SABER_COOLDOWN if danmaku else (TAP_COOLDOWN if saber_tier==0 else CHARGED_COOLDOWN)
+	if saber_tier==0 and not danmaku:
+		if grounded and absf(velocity.x)<15 and dash_timer<=0:
+			saber_cooldown+=saber_spam*SPAM_STEP
+			saber_spam=mini(saber_spam+1,8)
+		else: saber_spam=0
+		saber_spam_timer=1.0
 	saber_facing=facing
 	saber_hits.clear(); saber_boss_hit=false; saber_pending=-1; saber_buffer=0
 	muzzle_time=0
@@ -2932,7 +2951,43 @@ func saber_rect() -> Rect2:
 	if saber_kind=="air": return Rect2(player-Vector2(reach,reach+55),Vector2(reach*2,reach*2))
 	return Rect2(player+Vector2(0 if saber_facing>0 else -reach,-102 if saber_kind=="dash" else -55-reach),Vector2(reach,80 if saber_kind=="dash" else reach*2))
 
+# The current sweep of a drawn slash: start/now angles, how far through the stroke, and the fade after it.
+func slash_sweep() -> Dictionary:
+	if saber_time<=0 or saber_seq.is_empty(): return {}
+	var t=saber_total-saber_time
+	var result={}
+	for hit_round in [1,2]:
+		var first=-1.0
+		var last=-1.0
+		var at=0.0
+		for seg in saber_seq:
+			if seg[2]==hit_round:
+				if first<0: first=at
+				last=at+seg[1]
+			at+=seg[1]
+		if first<0 or t<first: continue
+		var arcs=SWEEP_AIR if saber_kind=="air" or saber_air else SWEEP_GROUND
+		var arc=arcs[hit_round-1]
+		# Most of the arc is covered in the first moment of the stroke: the blade is never seen mid-way.
+		var q=1-pow(1-clampf((t-first)/maxf(0.01,last-first),0,1),3)
+		var fade=1.0-clampf((t-last)/SWEEP_LINGER,0,1)
+		if fade<=0: continue
+		result={"from":arc[0],"to":lerpf(arc[0],arc[1],q),"q":q,"fade":fade,"active":t<last}
+	return result
+
 func saber_contacts(target: Rect2) -> bool:
+	if not saber_seq.is_empty():
+		# Only what the blade has swept so far is hit: aim the arc at the shot.
+		var sweep=slash_sweep()
+		if sweep.is_empty(): return false
+		var center=player-Vector2(0,55)
+		var near=Vector2(clampf(center.x,target.position.x,target.end.x),clampf(center.y,target.position.y,target.end.y))
+		if door_between(center.x,near.x,near.y) or door_between(center.x,target.get_center().x,target.get_center().y): return false
+		var offset=near-center
+		if offset.length()>saber_reach(): return false
+		if offset.length()<28: return true
+		var angle=Vector2(offset.x*saber_facing,offset.y).angle()
+		return angle>=minf(sweep.from,sweep.to)-0.25 and angle<=maxf(sweep.from,sweep.to)+0.25
 	if not saber_rect().intersects(target): return false
 	var from=player-Vector2(0,55)
 	if door_between(from.x,target.get_center().x,target.get_center().y): return false

@@ -20,7 +20,7 @@ func fresh():
 func activate(tier: int, kind="ground"):
 	g.grounded=kind=="ground"; g.dash_timer=0.1 if kind=="dash" else 0.0
 	g.begin_saber(tier); g.saber_kind=kind
-	g.saber_time=g.saber_total-g.saber_startup-0.01
+	g.saber_time=g.saber_total-g.saber_startup-0.025
 func run():
 	g=load("res://game.gd").new(); root.add_child(g); g.muted=true; g.set_process(false); g.set_physics_process(false)
 	check(g.hero_actions.weapon!=null,"GPTImage weapon loads")
@@ -32,8 +32,8 @@ func run():
 		press(KEY_K,false); step(1)
 		check(g.saber_tier==tier and g.saber_time>0,"release selects charge tier %d"%tier)
 		if tier>0: check(g.walk_arm(0,false).muzzle.distance_to(prep)<12,"charged pose flows into release")
-		check(g.saber_reach()==[100.0,125.0,210.0][tier],"tier reach")
-		g.saber_time=g.saber_total-g.saber_startup-0.01
+		check(g.saber_reach()==[140.0,150.0,220.0][tier],"tier reach")
+		g.saber_time=g.saber_total-g.saber_startup-0.025
 		g.spawn_enemy(g.player+Vector2(g.saber_reach()-8,0),0,0); var enemy=g.enemies[-1]; enemy.hp=100
 		g.update_saber(); g.update_saber()
 		check(enemy.hp==100-g.SABER_DAMAGE[tier],"one hit with tier damage")
@@ -50,7 +50,8 @@ func run():
 	fresh(); press(KEY_K,true); step(52); press(KEY_SHIFT,true); press(KEY_K,false); step(1)
 	check(g.saber_kind=="dash" and g.velocity.x==720 and g.dash_timer>0,"dash release selects thrust without canceling dash")
 	fresh(); activate(0,"air")
-	check(g.saber_catches(g.player+Vector2(-80,-55),5) and g.saber_catches(g.player+Vector2(80,-55),5),"air rotation covers both sides")
+	# The drawn air slash sweeps from overhead down through the front, not behind.
+	check(g.saber_catches(g.player+Vector2(80,-55),5) and g.saber_catches(g.player+Vector2(10,-150),5) and not g.saber_catches(g.player+Vector2(-80,-55),5),"air slash sweeps overhead and front")
 	fresh(); activate(0,"ground")
 	check(not g.saber_catches(g.player+Vector2(-80,-55),5),"ground slash stays directional")
 	fresh(); activate(2,"dash")
@@ -58,7 +59,7 @@ func run():
 	fresh(); press(KEY_K,true); step(100)
 	g.enemy_shot(g.player+Vector2(60,-50),Vector2.ZERO); g.update_bullets(0)
 	check(g.bullets[0].enemy,"holding charge does not reflect")
-	press(KEY_K,false); step(1); g.saber_time=g.saber_total-g.saber_startup-0.01; g.update_bullets(0)
+	press(KEY_K,false); step(1); g.saber_time=g.saber_total-g.saber_startup-0.025; g.update_bullets(0)
 	check(not g.bullets[0].enemy and g.bullets[0].get("reflected",false),"charged release has timed reflection")
 	g.bullets.clear(); g.enemy_shot(g.player+Vector2(60,-50),Vector2.ZERO,9,"solid"); g.update_bullets(0)
 	check(g.bullets.size()==1 and g.bullets[0].enemy,"even max charge cannot erase solid shots")
@@ -89,5 +90,19 @@ func run():
 		g.update_saber(); g.saber_time=maxf(0,g.saber_time-1.0/60)
 	check(target.hp==100-2*g.SABER_DAMAGE[1],"first charge cuts twice")
 	release()
+	# Standing still and mashing: each tap waits longer. Moving resets it.
+	fresh()
+	var waits=[]
+	for tap in range(3):
+		press(KEY_K,true); step(1); waits.append(g.saber_cooldown); press(KEY_K,false)
+		while g.saber_cooldown>0 or g.saber_time>0: step(1)
+	check(waits[1]>waits[0]+0.1 and waits[2]>waits[1]+0.1,"standing mash adds delay")
+	press(KEY_RIGHT,true); step(3); press(KEY_RIGHT,false)
+	press(KEY_K,true); step(1); press(KEY_K,false)
+	check(absf(g.saber_cooldown-g.TAP_COOLDOWN)<0.03,"moving resets the mash delay")
+	release()
+	# Only the part of the arc swept so far hits.
+	fresh(); activate(0); g.saber_time=g.saber_total-g.saber_startup-0.002
+	check(not g.saber_catches(g.player+Vector2(90,-30),5) and g.saber_catches(g.player+Vector2(-20,-150),5),"slash hits only what it has swept")
 	print("MELEE TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
 	quit(0 if errors.is_empty() else 1)
