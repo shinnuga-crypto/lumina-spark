@@ -4,7 +4,7 @@
 
 タイトル画面はGPTImageの専用一枚イラストと透過ロゴを使用。夜の発電都市と金色の星炉を背にしたルミナを右側へ、ロゴ・副題・出撃メニューを左側へ配置しています。タイトル専用素材と生成プロンプトは `assets/title/` に保存しています。
 
-## ローカル制作版：地下ボスと攻撃表示（2026-10-25）
+## v1.4.0：地下ボスと攻撃表示（2026-10-25）
 
 地下ボスの床から登り直せるように、左端の上昇台と4段の足場を追加しました。上段に居続けると、重力装置が0.9秒予告してから下向きの圧力を出します。上段の足場を通過して下へ落とされるので、上で撃ち続けるだけでは戦えません。落下中は左右に動けます。床へ戻ったら左の上昇台から登り直せます。
 
@@ -14,7 +14,7 @@
 
 チャージ斬りは離してから1段0.12秒、最大0.22秒の振りかぶりを経て判定が出ます。その間は弾を防げません。再使用間隔は1段0.70秒、最大1.0秒（振り始め基準）。通常斬りは今までの速さです。連続するチャージ斬りも待ち時間を守り、早めに離した入力は次の使用可能時点へ予約されます。
 
-## ローカル制作版：溜め操作と飛翔斬撃（2026-10-25）
+## v1.4.0：溜め操作と飛翔斬撃（2026-10-25）
 
 - セーバーの1段溜めは0.18秒の溜めディレイが終わった直後から使用可能（最大1.6秒未満まで）。1段のリーチも150→180pxへ拡大しました。通常140px、最大220px。
 - 通常/1段の移動・構えの刃を小さく揃え、最大溜めに到達したときだけ大きな刃へ。空中最大溜めが両側へ出ていた問題を、絵・攻撃判定とも前方のみへ修正しました。
@@ -22,7 +22,7 @@
 - 飛翔斬撃の威力は14、両方最大で30。通常の溜め斬りに加えて発射し、同じ敵への飛ぶ斬撃の命中は1回。閉じた扉で止まります。空中でも使用できます。
 - ダッシュ斬りに細い青い槍、1段にミントの槍、最大に太い金色の槍のエフェクトを追加。刃先が前方へ伸び、余韻へつながります。
 
-## ローカル制作版：作画更新（2026-10-25）
+## v1.4.0：作画更新（2026-10-25）
 
 地上/空中の斬撃各6コマ、最大溜めの地上/空中各4コマ、ダッシュ4姿勢をGPTImageで描き直しました。頭の寸法を基準に体格を揃え、足元または腰の位置を合わせています。押した瞬間の通常斬り、1段溜めの2回斬り、最大溜めの重い一振りという最新の操作を維持します。剣は伸ばさず、金色の軌跡で一撃を見せます。最大溜めには独立した金色の斬撃エフェクトを実リーチに合わせて重ね、人物を拡大せず迫力を出しています。空中の最大溜めは最新の修正で前方のみの軌跡・判定に統一しました。
 
@@ -30,7 +30,7 @@
 
 独立した斬撃エフェクト4領域も含め、新原画はassets/motion/*-v3.pngとassets/campaign/*-v3.png。描画用領域・頭寸法・アンカーはassets/motion/v3-regions.json、接続はaction_art.gd。既存の原画とanimation.jsonは保存し、新原画の画素は変更していません。生成全文はassets/motion/PROMPTS-v3-saber.mdとassets/campaign/PROMPTS-vfx-v3.md。
 
-テスト制作中のためGitHubには反映しません。開発フォルダーの起動.cmdか、更新したローカルEXEを使用してください。公開済みv1.3.0は以前の内容です。
+今回の公開依頼により、作画・飛翔斬撃・ボス改修を含むv1.4.0を配布します。配布EXEか、開発フォルダーの起動.cmdを使用できます。以降の公開更新は明示依頼がある時だけ行います。
 
 ## 遊び方
 
@@ -101,7 +101,7 @@
 
 ## 制作・検証
 
-Windows単体EXEのビルド：Godot 4.7.2と同バージョンのWindows x86_64エクスポートテンプレートを用意し、`powershell -ExecutionPolicy Bypass -File tools/build-windows.ps1 -GodotExe "C:\Godot\Godot.exe"`。出力は `build/windows/LuminaSpark.exe`、配布ZIPは `build/LuminaSpark-v1.3.0-windows-x64.zip`、ハッシュは `build/SHA256SUMS.txt`。ローカルの同梱Godotを使う場合は `-GodotExe` を省略できます。PCK埋め込みと外部DLL不要の設定は `export_presets.cfg` に保存しています。[Windowsエクスポートの公式説明](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_windows.html)。
+Windows単体EXEのビルド：Godot 4.7.2と同バージョンのWindows x86_64エクスポートテンプレートを用意し、`powershell -ExecutionPolicy Bypass -File tools/build-windows.ps1 -GodotExe "C:\Godot\Godot.exe"`。出力は `build/windows/LuminaSpark.exe`、配布ZIPは `build/LuminaSpark-v1.4.0-windows-x64.zip`、ハッシュは `build/SHA256SUMS.txt`。ローカルの同梱Godotを使う場合は `-GodotExe` を省略できます。PCK埋め込みと外部DLL不要の設定は `export_presets.cfg` に保存しています。[Windowsエクスポートの公式説明](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_windows.html)。
 
 Godot 4.7.2 / GDScript。画像は組み込みGPTImage、BGMは上記のユーザー提供曲、効果音はオリジナルのプログラム合成です。画像のプロンプトは `assets/PROMPTS.md`、`assets/PROMPTS-v2.md`、`assets/motion/PROMPTS-rig.md`、`assets/motion/PROMPTS-arms-air.md`、`assets/improvements/PROMPTS.md`、`assets/title/PROMPTS.md` に保存しています。
 

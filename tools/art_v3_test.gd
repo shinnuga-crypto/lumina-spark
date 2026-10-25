@@ -52,5 +52,9 @@ func run():
 	fresh(); g.grounded=false; g.begin_saber(2); g.saber_time=g.saber_total-g.saber_startup-0.025
 	check(not g.saber_catches(g.player+Vector2(-170,-55),6) and g.saber_catches(g.player+Vector2(170,-55),6),"air MAX only cuts the forward side")
 	print("ART V3 TEST: ","PASS" if errors.is_empty() else "FAIL"," ",errors)
+	call_deferred("finish")
+
+func finish():
+	# Release run() locals that hold atlas textures before shutting down.
 	g.queue_free(); await process_frame; g=null; await process_frame
 	call_deferred("quit",0 if errors.is_empty() else 1)
