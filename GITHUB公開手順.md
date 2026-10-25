@@ -1,5 +1,7 @@
 # GitHub公開記録・更新手順
 
+**2026-10-25 最新方針：テスト制作中のため、GitHubへは今後上げない。新たな明示依頼があるまでpush・Release作成を停止し、ローカル制作と検証に留める。公開済みのものは削除しない。以下の更新手順は公開依頼を受けた場合だけ適用する。**
+
 2026-10-24 / GPT
 
 - 公開リポジトリ：[shinnuga-crypto/lumina-spark](https://github.com/shinnuga-crypto/lumina-spark)。mainへプッシュ済み。
